@@ -17,11 +17,18 @@ MIT のコードをコピー・改変した場合も、著作権表示および�
 
 - Repository: https://github.com/ebanez8/openstep
 - License: MIT License
-- Copyright: （移植時に記録）
-- 利用範囲: Global Mouse/Keyboard Hook、UI Automation、Screenshot、Redaction、Markdown/HTML Export の部分移植（fork はしない）
-- コピー/参考ファイル: 移植時に記録する
-- 参照 Commit SHA: （移植時に記録）
-- 改変: 移植時に記録する
+- Copyright: Copyright (c) 2025 ebanez8 (リポジトリ LICENSE より。正式表記は LICENSE ファイルを確認すること)
+- 利用範囲: Global Mouse/Keyboard Hook、UI Automation、Screenshot の部分移植（fork はしない）
+- コピー/参考ファイル: `spike/operation-capture/` に移植
+  - `Hooks/NativeMethods.cs` — src/OpenSteps.Capture/NativeMethods.cs をコピー（スパイクで使用する P/Invoke のみ残す）
+  - `Hooks/GlobalMouseHook.cs` — src/OpenSteps.Capture/GlobalMouseHook.cs + ClickCapturedEventArgs.cs をコピー（SpikeClickType に置換）
+  - `Hooks/GlobalKeyboardHook.cs` — src/OpenSteps.Capture/GlobalKeyboardHook.cs + KeyboardInputEventArgs.cs をコピー（特殊キー名を契約 §11.2 の表記に合わせた）
+  - `UiAutomation/UiAutomationService.cs` — src/OpenSteps.Capture/UiAutomationService.cs をコピー（namespace 変更のみ）
+  - `UiAutomation/UiElementInfo.cs` — src/OpenSteps.Core/Models/UiElementInfo.cs をコピー
+  - `WindowInfoService.cs` — src/OpenSteps.Capture/ActiveWindowService.cs を参考に最小化
+  - `ScreenshotCapture.cs` — src/OpenSteps.Capture/ScreenshotService.cs を参考に最小化
+- 参照 Commit SHA: 8058980865ac07f261b97b7270776c486b942a16
+- 改変: namespace 変更、OpenSteps.Core モデル依存の削除、キー名表記の契約合わせ、不要機能（Redaction/複数モード等）の削減
 
 ## NessStudio
 
