@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 担当D: ローカルファイルシステム上の TrainingProject 永続化（Contract §17 Directory / §18 Path Rule）。
+       MVP では DB を導入しない。第三者 NuGet 依存は追加しない。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <RootNamespace>TrainingContent.Storage</RootNamespace>
+    <AssemblyName>TrainingContent.Storage</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TrainingContent.Core\TrainingContent.Core.csproj" />
+  </ItemGroup>
+
+</Project>

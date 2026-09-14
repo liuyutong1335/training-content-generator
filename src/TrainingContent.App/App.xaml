@@ -1,0 +1,10 @@
+﻿<Application x:Class="TrainingContent.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <!-- ナビゲーションで共有する最小限のブラシのみ。Theme System は作らない。 -->
+        <SolidColorBrush x:Key="NavButtonHoverBrush" Color="#FFE8EEF7" />
+        <SolidColorBrush x:Key="NavButtonActiveBrush" Color="#FFD6E2F5" />
+    </Application.Resources>
+</Application>
