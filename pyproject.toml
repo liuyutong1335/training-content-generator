@@ -4,14 +4,23 @@ version = "0.1.0"
 description = "デスクトップ操作の録画から研修動画 (MP4) と操作マニュアル (MD/HTML) を生成する Windows デスクトップアプリ"
 requires-python = ">=3.10"
 dependencies = [
-    "pyside6>=6.6",          # D: デスクトップ UI
-    "pydantic>=2.5",         # 共有: Project / Timeline / Marker の型定義・検証
-    "jinja2>=3.1",           # C: マニュアルテンプレート
-    "pillow>=10.0",          # C/B: 画像処理（フレーム抽出後の加工）
-    "opencv-python>=4.9",    # C/B: フレーム抽出
-    "pytest>=8.0",           # テスト
+    "pydantic>=2.5",          # 共有: Project / Timeline / Marker の型定義・検証
+    "jinja2>=3.1",            # C: マニュアルテンプレート
+    "pillow>=10.0",           # C/B: 画像処理（フレーム抽出後の加工）
+    "opencv-python>=4.9",     # C/B: フレーム抽出
+    "imageio-ffmpeg>=0.4.9",  # A: 同梱 FFmpeg バイナリ（環境に FFmpeg が無くても録画可能）
+    "sounddevice>=0.4.6",     # A: マイク録音 (PortAudio)
+    "numpy>=1.26",            # sounddevice のコールバックに必要（opencv も使用）
+    "pyaudiowpatch>=0.2.12",  # A: システム音声録音 (WASAPI loopback)
+    "pytest>=8.0",            # テスト
 ]
-# FFmpeg は pip 依存ではなく別途インストール（画面・音声録画および MP4 生成に使用）
+
+[project.optional-dependencies]
+# D: デスクトップ UI（重いので UI 実装時にインストール）
+ui = ["pyside6>=6.6"]
 
 [tool.setuptools]
-packages = []
+packages = ["core", "capture"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
