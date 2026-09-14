@@ -69,12 +69,49 @@ long durationMs = session.Stop(); // recording.stopped、論理時間を返す
 dotnet test tests/TrainingContent.EventCapture.Tests
 ```
 
-`MasterClock`（Pause 論理）、`EventTimelineWriter`（出力形式）、`TextEntryAggregator`
-（バースト集約 + Password 保護）の単体テスト。
+`MasterClock`（Pause 論理・原点張り直し）、`EventTimelineWriter`（出力形式）、
+`TextEntryAggregator`（バースト集約 + Password 保護）の単体テスト。
 実機での操作取得検証は `spike/operation-capture/`（Spike B）で完了済み — Gate B 8 項目 PASS。
+
+## A（IRecordingEngine）との時間同期 — 統合時の最重要ポイント
+
+A の Engine は `StartAsync()` 呼び出しから**実際の撮影開始まで ~2 秒かかり**（WGC 初期化、
+duty-a-progress §3-8）、A の内部クロックは撮影開始瞬間に `Restart()` される。
+一方 `StateChanged(Recording)` は `StartAsync()` 呼び出し時点で発火するため、
+**このイベントを待って Session を開始すると Event 側の 0ms が MP4 より ~2 秒早くなり、
+字幕・Step 画像がすべて 2 秒ずれる**。
+
+推奨手順（担当 D が Record UI で実装する形）:
+
+```csharp
+// 1. A の撮影が実際に始まった瞬間まで Session を開始しない
+engine.StateChanged += (s, e) =>
+{
+    if (e.State == RecordingState.Recording && !sessionStarted)
+    {
+        // ※ 要 A 側の対応: 撮影開始瞬間（OnStatusChanged で _captureStarted が立つ箇所）で
+        //    もう一度 StateChanged(Recording) を発火、または専用イベントを追加してもらう。
+        //    現状の実装では StartAsync 直後に 1 回しか発火しないため、A に依頼中。
+        session = new OperationCaptureSession(projectDir);
+        session.Start(); // ここが Canonical 0ms == MP4 の 0 秒になる
+        sessionStarted = true;
+    }
+};
+await engine.StartAsync(options);
+
+// 2. 以降の Pause/Resume は engine と session の両方へ（UI から同一契機で呼ぶ）
+// 3. 停止: var durationMs = session.Stop(); await engine.StopAsync();
+//    両者の論理時間が一致することを統合テストで確認する
+```
+
+代替策: 録画開始順を制御できない場合、撮影開始の瞬間が分かった時点で
+`session.RebaseClockToNow()` を呼べば Event 側の原点を張り直せる（単体テスト済み）。
+**A へのお願い**: 撮影開始を検出した瞬間に再度 `StateChanged(Recording)` を発火するか、
+専用の `CaptureStarted` イベントの追加（非破壊的変更）を `docs/integration-notes.md` §1 で提案する。
 
 ## 担当 D への依頼
 
 - `TrainingContentGenerator.sln` への本プロジェクト追加は統合担当の窓口でお願いする
-  （競合回避のため B 側では sln を変更していない）。
+  （競合回避のため B 側では sln を変更していない）。x64 プラットフォーム必須。
 - Record UI は自プロセスの WPF ウィンドウになるため、自プロセス除外判定は既定のままで機能する。
+- 上記「A との時間同期」の手順を Record UI に実装すること。

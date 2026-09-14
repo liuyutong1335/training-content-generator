@@ -130,6 +130,22 @@ public sealed class OperationCaptureSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// Canonical Timeline の原点を現在時刻に張り直す（MasterClock.RebaseOriginToNow 参照）。
+    /// 用途: 担当 A の IRecordingEngine が「実際の撮影開始」を通知してきた瞬間に呼び、
+    /// Event 側の 0ms を MP4 の 0 秒に一致させる（docs/integration-notes.md §1 / duty-a-progress §3-8）。
+    /// 録画開始直後（Pause が起きる前）に呼ぶことを想定。
+    /// </summary>
+    public void RebaseClockToNow()
+    {
+        lock (_stateSync)
+        {
+            ThrowIfNotRunning();
+            FlushTextBuffer();
+            _clock.RebaseOriginToNow();
+        }
+    }
+
     /// <summary>録画を停止し、論理 DurationMs を返す。</summary>
     public long Stop()
     {

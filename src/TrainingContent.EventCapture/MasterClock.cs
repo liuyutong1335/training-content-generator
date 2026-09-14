@@ -13,6 +13,7 @@ public sealed class MasterClock
     private readonly Stopwatch? _ownedStopwatch;
     private long _pausedAccumulatedMs;
     private long? _pauseStartedAtMs;
+    private long _originShiftMs;
     private bool _started;
 
     /// <summary>実運用: Stopwatch が時間源。</summary>
@@ -55,6 +56,17 @@ public sealed class MasterClock
         }
     }
 
+    /// <summary>
+    /// 現在時刻を新しい原点（0ms）に張り直す。
+    /// 用途: 録画エンジンの実際の撮影開始瞬間に Canonical Timeline を合わせる
+    /// （ScreenRecorderLib の WGC 初期化 ~2 秒問題。docs/integration-notes.md §1 参照）。
+    /// Pause 累計は保持されるため、録画途中の再基準にも耐える。
+    /// </summary>
+    public void RebaseOriginToNow()
+    {
+        _originShiftMs += NowMs();
+    }
+
     /// <summary>Canonical Timeline 上の現在時刻 (ms)。開始前は 0。</summary>
     public long NowMs()
     {
@@ -65,6 +77,6 @@ public sealed class MasterClock
 
         var raw = _elapsedMs();
         var pauseNow = _pauseStartedAtMs.HasValue ? raw - _pauseStartedAtMs.Value : 0;
-        return raw - _pausedAccumulatedMs - pauseNow;
+        return raw - _pausedAccumulatedMs - pauseNow - _originShiftMs;
     }
 }
