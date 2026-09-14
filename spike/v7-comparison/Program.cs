@@ -95,7 +95,8 @@ if (finished == failure.Task)
     return 1;
 }
 var e2 = await completion.Task;
-var logicalSeconds = clock.Elapsed.TotalSeconds;
+// 論理 Duration = 実撮影時間から Pause を除く（契約 §5.2・v6.6.0 の CanonicalDuration と同じ式）
+var logicalSeconds = clock.Elapsed.TotalSeconds - (pauseEnd - pauseStart).TotalSeconds;
 var wallSeconds = (DateTime.UtcNow - startedAt).TotalSeconds;
 
 var mp4 = Mp4Inspector.Inspect(e2.FilePath);
