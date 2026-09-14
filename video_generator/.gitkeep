@@ -1,1 +1,1 @@
-﻿C: 動画生成 (storyboard/renderer/subtitle) — 実装はC担当
+﻿B担当: 動画生成 (storyboard/renderer/audio/subtitle.py) — 音声ミックス・字幕・MP4出力
