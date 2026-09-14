@@ -50,17 +50,6 @@ workdata/normalized_steps.json   ← ★唯一の共通中間データ
 | C | 動画生成（`video_generator/`） | `output/training_video.mp4` |
 | D | UI・API・統合（`app.py` / `ui/`） | 起動入口・E2E デモ |
 
-## MVP スコープ（今日やること）
-
-- ✅ 方式A：JSON ＋ スクリーンショット取込（必須）
-- ✅ 操作記録の正規化・検証・脱敏
-- ✅ マニュアル生成（Markdown / HTML）
-- ✅ 動画生成（MP4・字幕焼き込み）
-- ✅ シンプルな Web UI（Streamlit）
-- ❌ Playwright 自動記録（v0.3）
-- ❌ AI による内容生成（v0.4）
-- ❌ TTS・PDF（v0.5 / v0.6）
-
 ## セキュリティ
 
 パスワード・個人情報・Token は**そのまま保存しない**。入力値は必ず脱敏する（詳細は `shared/contract.md`）。
