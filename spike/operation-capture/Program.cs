@@ -206,13 +206,42 @@ void ProcessItem(RawItem item)
 static string WindowKey(WindowInfo w) => $"{w.ProcessId}:{w.WindowTitle}";
 
 // ---- 録画開始 ----
-using var mouseHook = new GlobalMouseHook();
-using var keyboardHook = new GlobalKeyboardHook();
-mouseHook.ClickCaptured += HandleMouseEvent;
-keyboardHook.KeyboardInputCaptured += HandleKeyEvent;
+// Low-Level Hook はフックを設置したスレッドがメッセージループを回している必要がある
+// （コンソールアプリにはメッセージループがないため、フック専用スレッドで
+//   WinForms の Application.Run() を回す。これがないとコールバックが一切呼ばれない）。
+Exception? hookInitError = null;
+var hookThreadReady = new ManualResetEventSlim(false);
 
-mouseHook.Start();
-keyboardHook.Start();
+var hookThread = new Thread(() =>
+{
+    try
+    {
+        using var mouseHook = new GlobalMouseHook();
+        using var keyboardHook = new GlobalKeyboardHook();
+        mouseHook.ClickCaptured += HandleMouseEvent;
+        keyboardHook.KeyboardInputCaptured += HandleKeyEvent;
+        mouseHook.Start();
+        keyboardHook.Start();
+        hookThreadReady.Set();
+        System.Windows.Forms.Application.Run(); // メッセージループでフックを維持する
+        mouseHook.Stop();
+        keyboardHook.Stop();
+    }
+    catch (Exception ex)
+    {
+        hookInitError = ex;
+        hookThreadReady.Set();
+    }
+});
+hookThread.SetApartmentState(ApartmentState.STA);
+hookThread.Start();
+hookThreadReady.Wait();
+
+if (hookInitError is not null)
+{
+    throw new InvalidOperationException("フックの初期化に失敗しました。", hookInitError);
+}
+
 clock.Start();
 writer.Append("recording.started", clock.NowMs(), new { });
 Console.WriteLine();
@@ -239,8 +268,8 @@ while (true)
     {
         FlushTextBuffer();
         var durationMs = clock.NowMs();
-        mouseHook.Stop();
-        keyboardHook.Stop();
+        System.Windows.Forms.Application.Exit(); // フックスレッドのメッセージループを抜ける
+        hookThread.Join(5000);
         writer.Append("recording.stopped", durationMs, new { });
         queue.CompleteAdding();
         worker.Join(3000);
