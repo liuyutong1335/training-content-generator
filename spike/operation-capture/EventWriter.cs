@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace OperationCaptureSpike;
@@ -42,7 +43,12 @@ public sealed record TargetPayload(string? Name, string? AutomationId, string? C
 /// </summary>
 public sealed class EventWriter
 {
-    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+    // UnsafeRelaxedJsonEscaping: 日本語などの非 ASCII を \uXXXX にエスケープせず
+    // そのまま出力する（JSONL を人間が読めるようにするため。JSON 的にはどちらも正当）。
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     private readonly string _path;
     private readonly object _sync = new();

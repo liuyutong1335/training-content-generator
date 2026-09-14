@@ -41,6 +41,14 @@ public static class WindowInfoService
 
         var title = GetWindowTitle(hwnd);
         NativeMethods.GetWindowThreadProcessId(hwnd, out var processId);
+
+        // タスクバー等のシェルウィンドウでは PID 取得やプロセス解決に失敗することが
+        // あるため、その場合はフォアグラウンドウィンドウへフォールバックする。
+        if (processId == 0)
+        {
+            return FromForegroundWindow();
+        }
+
         string? processName = null;
         try
         {
