@@ -1,12 +1,18 @@
-# Python
-__pycache__/
-*.pyc
-.venv/
-venv/
+# .NET
+bin/
+obj/
+*.user
+.vs/
+artifacts/
 
 # プロジェクトデータ（録画 Raw Media はサイズが大きいためコミットしない）
 projects/*
 !projects/.gitkeep
+
+# Python（spike/ アーカイブ用）
+__pycache__/
+*.pyc
+.venv/
 
 # OS
 Thumbs.db

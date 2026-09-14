@@ -1,147 +1,110 @@
 # training-content-generator
 
-[![plan](https://img.shields.io/badge/plan-v0.1-orange)](docs/development-plan.md)
-[![python](https://img.shields.io/badge/python-3.10%2B-green)](pyproject.toml)
+[![plan](https://img.shields.io/badge/plan-v0.2-orange)](docs/development-plan.md)
+[![dotnet](https://img.shields.io/badge/.NET-8.0-blue)](TrainingContentGenerator.sln)
 
-デスクトップ上の操作・音声・入力テキストを記録し、**トレーニング動画**（MP4）と**操作マニュアル**（Markdown / HTML）を生成・管理する Windows デスクトップアプリです。詳細は [開発計画書](docs/development-plan.md) を参照してください。
+デスクトップ上の業務操作（画面・システム音声・マイク音声・マウス/キーボード操作）を記録し、**トレーニング動画**（MP4）と**操作マニュアル**（Markdown / HTML）を生成・管理する **Windows デスクトップアプリ**（WPF）です。詳細は [開発計画書 v0.2](docs/development-plan.md) を参照してください。
 
 ## 概要
 
-研修教材を手作業で作ると、録画・説明文の作成・動画編集・手順書作成がすべて別々の作業になり、内容の食い違いや再作成コストが発生します。本ツールは「画面＋システム音声＋マイク音声＋Step Marker」を**共通の Training Project データ**として 1 回記録し、動画とマニュアルの双方をそこから決定論的に生成します。
+動画とマニュアルを個別に生成するのではなく、録画・操作イベント・テキストを共通の **TrainingProject** として管理します。
 
 ```
-画面録画 ＋ システム音声 ＋ マイク音声 ＋ Step Marker
+画面録画 ＋ システム音声 ＋ マイク音声 ＋ マウス/キーボード操作 ＋ テキスト
         ↓
-   Training Project   ← ★唯一の共通データ（Raw Media / Timeline / Metadata / Frames）
-        ├→ Video Generator  → training_video.mp4
-        └→ Manual Generator → manual.md / manual.html
+   TrainingProject（Recording / Timeline / Events / Steps / Assets）
+        ├→ Training Video (MP4)
+        └→ Manual (Markdown / HTML)
         ↓
-   Content Manager（一覧・閲覧・再生成・削除・出力）
+   Content Manager（一覧・再読込・再生成・削除・出力）
 ```
 
-## 主な機能
+## 必須要件
 
-| 要件 | 機能 | 説明 |
-|------|------|------|
-| R-01 | 画面録画 | デスクトップ全体／任意アプリケーションを録画 |
-| R-02 | 音声録画 | システム音声とマイク音声の双方を録音 |
-| R-03 | テキスト入力 | 教材情報・補足説明・Step Marker（title / description / caution / expected_result）を入力 |
-| R-04 | 動画生成 | 録画素材に音声ミックス・タイトル・字幕を合成して MP4 出力 |
-| R-05 | マニュアル生成 | Step・代表フレーム・注意事項・期待結果から Markdown / HTML を生成 |
-| R-06 | コンテンツ管理画面 | 作成済み教材の一覧・閲覧・再生成・削除・出力 |
+| ID | 要件 |
+|----|------|
+| R-01 | 画面録画（デスクトップ全体・任意アプリを区別しない） |
+| R-02 | システム音声録画 |
+| R-03 | マイク音声録画 |
+| R-04 | テキスト入力 |
+| R-05 | トレーニング動画生成 |
+| R-06 | 操作マニュアル生成 |
+| R-07 | コンテンツ管理画面 |
 
-## 設計原則
+## 技術構成
 
-- **Single Source of Truth** — 動画・マニュアルは共通プロジェクトデータを参照する（完成 MP4 の再解析はしない）
-- **Raw / Work / Output 分離** — 原素材・加工データ・成果物をディレクトリで分離
-- **Timestamp 統一** — 録画開始からの経過時間を全モジュールで同一単位・基準とする
-- **Deterministic Generation** — MVP の成果物生成はルールベースで再現可能とする
-- **Desktop First** — 全アプリ・システム音声要件のため Web UI ではなくデスクトップアプリ（PySide6）
+| 領域 | 採用技術 |
+|------|---------|
+| Language / Runtime | **C# / .NET 8** |
+| Desktop UI | WPF |
+| Screen Recording | [ScreenRecorderLib](https://github.com/sskodje/ScreenRecorderLib)（NuGet・MIT） |
+| System Audio / Mic | WASAPI Loopback / Capture（ScreenRecorderLib 経由） |
+| Mouse / Keyboard Capture | Win32 Low-Level Hook |
+| UI 情報取得 | Windows UI Automation |
+| Data | JSON / JSONL（ローカルファイルシステム・DB なし） |
+| Test | xUnit / `dotnet test` |
 
-## 技術スタック
-
-| 領域 | 採用 | 用途 |
-|------|------|------|
-| Desktop UI | [PySide6](https://pypi.org/project/PySide6/) | 録画・レビュー・生成・管理画面 |
-| 録画 | FFmpeg（Windows Capture / WASAPI） | 画面・2 系統音声の同時録音 ※Technical Spike で確定 |
-| 音動画処理 | FFmpeg | 音声ミックス、字幕合成、MP4 出力 |
-| 画像処理 | Pillow / OpenCV | フレーム抽出・画像処理 |
-| データモデル | Pydantic | Project / Timeline / Marker の型定義・バリデーション |
-| マニュアル生成 | Jinja2 | Markdown / HTML テンプレート |
-| データ管理 | SQLite | プロジェクト一覧・状態・成果物パス |
-| テスト | pytest | 単体・結合・E2E |
+OSS 利用方針・ライセンス記録は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照（OBS / ShareX は GPL のためコードを利用しない）。
 
 ## セットアップ
 
-```bash
-git clone https://github.com/liuyutong1335/training-content-generator.git
-cd training-content-generator
+```powershell
+# .NET 8 SDK が必要です
+winget install Microsoft.DotNet.SDK.8
 
-python -m venv .venv
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-# macOS / Linux
-source .venv/bin/activate
-
-pip install -e .
+dotnet build TrainingContentGenerator.sln
+dotnet test TrainingContentGenerator.sln
 ```
 
-FFmpeg は別途インストールが必要です（[ffmpeg.org](https://www.ffmpeg.org/download.html)、PATH を通してください）。
-
-## 使い方
-
-```bash
-python app.py
-```
-
-アプリ内の画面フロー:
+## プロジェクト構成（計画書 §12）
 
 ```
-Project（教材情報入力） → Record（録画＋Step Marker） → Review（確認・修正）
-      → Generate（動画／マニュアル生成） → Contents（一覧・再生成・削除・出力）
+TrainingContentGenerator.sln
+├─ src/
+│  ├─ TrainingContent.App/        D: WPF Shell・Recording/Review UI・Content Manager
+│  ├─ TrainingContent.Core/       共有: TrainingProject / TimelineEvent / TrainingStep（変更は4名合議）
+│  ├─ TrainingContent.Capture/    A: Recording Engine（ScreenRecorderLib 抽象化・デバイス列挙・Pause/Resume）
+│  ├─ TrainingContent.Video/      B: Timeline / Overlay / Subtitle / Renderer
+│  ├─ TrainingContent.Manual/     C: Markdown / HTML 生成
+│  └─ TrainingContent.Storage/    D: ProjectStore / ContentIndex
+├─ tests/                          xUnit（Core/Capture/Manual/Video/Integration）
+├─ docs/development-plan.md        開発計画書 v0.2（正）
+├─ spike/python-recording/         v0.1 Python spike のアーカイブ（参考資料）
+├─ projects/                       教材プロジェクトデータ（gitignore）
+└─ specs/                          Tecnos-STRIDE 成果物（Gate 管理中）
 ```
 
-プロジェクトデータは `projects/<project_id>/` 配下に保存され、再オープン・再生成が可能です。
+## 担当分担（計画書 §24）
 
-## プロジェクト構成
+| 担当 | 主領域 | 参考 Repository |
+|------|--------|----------------|
+| **A: Recording Engine** | `TrainingContent.Capture` | ScreenRecorderLib / NessStudio |
+| B: Event Capture / Timeline | Mouse/Keyboard Hook・UIA・Master Clock・events.jsonl | OpenSteps |
+| C: Training Content | TrainingStep / StepBuilder / Screenshot / Redaction / Manual | OpenSteps |
+| D: App / Integration | WPF Shell / ProjectStore / Content Manager / E2E | OpenSteps SessionStore |
 
-```
-training-content-generator/
-├─ app.py                  起動入口 (PySide6) — D
-├─ core/                   共有データモデル（Pydantic）★変更は4名合議
-│  ├─ models.py            Project / Timeline / Marker の型定義
-│  ├─ project.py           Project の読み書き
-│  ├─ timeline.py          Timeline / Marker 操作
-│  └─ config.py            設定
-├─ capture/                A: 録画（画面・システム音声・マイク・同期）
-│  ├─ screen.py / system_audio.py / microphone.py
-│  ├─ recorder.py          録画制御（開始・停止・一時停止）
-│  └─ devices.py           デバイス列挙
-├─ video_generator/        B: 動画生成（storyboard / renderer / audio / subtitle）
-├─ manual_generator/       C: マニュアル生成（generator / frame_extractor / templates）
-├─ storage/                D: SQLite・ファイル管理
-├─ ui/                     D: PySide6 画面（project / record / review / generate / contents）
-├─ tests/                  pytest（単体・結合・E2E）
-├─ projects/               教材プロジェクトデータ（Raw Media / Timeline / Outputs）
-└─ docs/
-   └─ development-plan.md  開発計画書（正）
-```
+### 開発 Gate（計画書 §30）
 
-## 開発
-
-```bash
-python -m pytest tests/ -v
-```
-
-### コントリビューションルール
-
-1. `core/models.py`（共有契約）の変更は**先にチーム 4 名の合意**を取る。独自フィールドを追加しない
-2. timestamp は全モジュールで同一単位・基準（録画開始からの経過時間）を使用する
-3. A の録画完了を待たずに全員が作業できるよう、共通の 1～2 分録画サンプルを用意する
-4. README / pyproject.toml の変更は統合担当（D）を窓口とする
-
-### 開発優先順位
-
-| 優先 | 対象 |
+| Gate | 内容 |
 |------|------|
-| P0 | 録画不能、ファイル破損、E2E 不通 |
-| P1 | 音画同期、成果物内容不一致、データ破損 |
-| P2 | 入力チェック、エラー表示、再生成・削除の不整合 |
-| P3 | UI 装飾、アニメーション、非必須改善 |
+| G1 Capture Gate | Desktop + System Audio + Mic を安定録画 |
+| G2 Timeline Gate | Video / Mouse / Keyboard / Screenshot が同一時間軸で対応 |
+| G3 Training Data Gate | Raw Event → TrainingStep 生成・保存・再読込 |
+| G4 Output Gate | 同一 TrainingStep から Manual + Video を生成し内容一致 |
 
-## ロードマップ
+**G1〜G4 がすべて PASS した時点を MVP 完了とする。**
 
-| バージョン | テーマ | 主要機能 |
-|-----------|--------|---------|
-| MVP | Recording 基盤 | 録画（画面＋2 系統音声）→ 動画／マニュアル生成 → 管理画面 |
-| v0.2 | Recording Reliability | デバイスエラー対応、録画復旧、Timeline 編集 |
-| v0.3 | Auto Shortening | 無駄区間の自動検出・削除候補 |
-| v0.4 | Text to TTS | 入力テキストの機械音声化 |
-| v0.5 | Voice to TTS | 録画音声 → STT → 確認 → TTS |
-| v0.6 | AI Step Detection | Step 候補の自動生成 |
-| v0.7 | AI Content Enrichment | Step タイトル・説明等の提案（人間承認フロー） |
-| v1.0 | Productization | パッケージ化・設定・品質 Gate |
+## 開発ルール
 
-## セキュリティ
+1. `TrainingProject.cs` / `TimelineEvent.cs` / `TrainingStep.cs` / Event Type / Timestamp rule / schema_version / ディレクトリ構造は **Shared 領域**。単独変更禁止（Proposal → Team Review → Merge）
+2. Timestamp は**ミリ秒**に統一（録画開始基準）
+3. Raw Event は原則変更しない。Training Step のみ Review UI から編集
+4. Manual / Video の説明文は両方とも `TrainingStep.Description` を使用（別々に生成しない）
+5. セキュリティ: 入力文字そのものを Keyboard Hook で保存しない・Password 入力を Step として保存しない・Project はローカル保存
 
-録画には画面上の機密情報が含まれ得ます。MVP ではローカル保存と出力前確認を行い、マスキング機能は後続バージョンで追加します（開発計画書 §11 のリスク管理を参照）。
+## 現在の状態
+
+- [x] Spike（Python・v0.1 時代）— `spike/python-recording/` にアーカイブ
+- [ ] Phase 0: Contract Freeze（TrainingProject / TimelineEvent / TrainingStep / Directory / Timestamp / Breaking Change ルール）← **ここ**
+- [ ] Phase 1: Spike A（Recording: v6.6.0 vs v7.0.1 実機比較）/ Spike B（Operation Capture）
+- [ ] Phase 2〜8: 統合録画 → Step Builder → Review UI → Manual → Video → Content Manager → E2E
