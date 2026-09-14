@@ -1,0 +1,15 @@
+[project]
+name = "training-content-generator"
+version = "0.1.0"
+description = "操作記録JSON＋スクリーンショットから研修教材（マニュアル・動画）を生成するツール"
+requires-python = ">=3.10"
+dependencies = [
+    "jsonschema>=4.20",      # A: operation.json のスキーマ検証
+    "jinja2>=3.1",           # B: マニュアルテンプレート
+    "pillow>=10.0",          # C: 画像処理（リサイズ・ハイライト）
+    "moviepy>=2.0",          # C: 動画合成（FFmpeg に依存）
+    "streamlit>=1.30",       # D: Web UI
+]
+
+[tool.setuptools]
+packages = []

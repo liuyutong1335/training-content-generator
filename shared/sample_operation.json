@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0.0",
+  "title": "経費申請の登録方法",
+  "purpose": "経費精算システムにログインし、経費申請を登録して完了確認ができるようになる。",
+  "target": "新入社員",
+  "prerequisites": "経費精算システムのアカウントが発行済みであること。",
+  "notes": [
+    "パスワードは操作記録に保存しないでください。"
+  ],
+  "steps": [
+    {
+      "step_no": 1,
+      "title": "ログイン画面を開く",
+      "action": "navigate",
+      "target": "システムURL",
+      "description": "システムのURLにアクセスします。",
+      "screenshot": "step01.png",
+      "expected_result": "ログイン画面が表示されること。"
+    },
+    {
+      "step_no": 2,
+      "title": "ログインする",
+      "action": "input",
+      "target": "社員番号",
+      "input_value": "sample-user",
+      "description": "社員番号を入力し、「ログイン」ボタンをクリックします。",
+      "screenshot": "step02.png",
+      "caution": "パスワードは操作記録に保存しないでください。",
+      "expected_result": "メニュー画面が表示されること。"
+    },
+    {
+      "step_no": 3,
+      "title": "経費申請メニューを開く",
+      "action": "click",
+      "target": "経費申請メニュー",
+      "description": "メニューから「経費申請」をクリックします。",
+      "screenshot": "step03.png",
+      "expected_result": "経費申請一覧画面が表示されること。"
+    },
+    {
+      "step_no": 4,
+      "title": "新規登録を開始する",
+      "action": "click",
+      "target": "新規登録ボタン",
+      "description": "「新規登録」ボタンをクリックします。",
+      "screenshot": "step04.png",
+      "expected_result": "経費申請の入力画面が表示されること。"
+    },
+    {
+      "step_no": 5,
+      "title": "申請内容を入力する",
+      "action": "input",
+      "target": "申請内容入力欄",
+      "input_value": "sample-expense",
+      "description": "申請内容を入力します。",
+      "screenshot": "step05.png",
+      "expected_result": "入力した内容が画面に反映されること。"
+    },
+    {
+      "step_no": 6,
+      "title": "申請を登録する",
+      "action": "click",
+      "target": "登録ボタン",
+      "description": "「登録」ボタンをクリックします。",
+      "screenshot": "step06.png",
+      "expected_result": "申請完了画面が表示されること。"
+    },
+    {
+      "step_no": 7,
+      "title": "完了を確認する",
+      "action": "confirm",
+      "target": "完了メッセージ",
+      "description": "完了メッセージを確認し、申請番号を控えます。",
+      "screenshot": "step07.png",
+      "caution": "申請番号は後で問い合わせる際に必要になるため、必ず控えてください。",
+      "expected_result": "申請番号が画面に表示されること。"
+    }
+  ]
+}

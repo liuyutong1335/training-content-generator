@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 生成物・作業データ（研修用リポジトリではコミットしない）
+output/*
+workdata/*
+!output/.gitkeep
+!workdata/.gitkeep
+
+# 入力スクリーンショット（サイズが大きい場合あり。必要なら除外を外す）
+# input/screenshots/*.png
+
+# OS
+Thumbs.db
+.DS_Store
