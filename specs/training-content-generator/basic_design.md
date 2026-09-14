@@ -10,6 +10,7 @@ created_at: 2026-09-14
 # training-content-generator — Basic Design
 
 > v0.2 開発計画書（docs/development-plan.md）反映版ドラフト。Gate 1 審議対象。
+> **Phase 0 共通データ契約 v1.0 が FROZEN**（docs/phase0-contract.md）— 共有モデルは同書を優先。
 
 ## #0 Need (なぜ)
 > 解決したい課題と背景。

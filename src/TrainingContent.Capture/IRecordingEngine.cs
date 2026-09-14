@@ -45,11 +45,11 @@ public sealed class RecordingStateChangedEventArgs : EventArgs
     public string? ErrorMessage { get; init; }
 }
 
-/// <summary>録画デバイス（ディスプレイ）。</summary>
-public sealed record DisplayDevice(string DeviceName, bool IsPrimary);
+/// <summary>録画デバイス（ディスプレイ）。DeviceId は RecordingInfo.DisplayId へ保存する（契約 §7 Device Rule）。</summary>
+public sealed record DisplayDevice(string DeviceId, string DeviceName, bool IsPrimary);
 
-/// <summary>録音デバイス。Source でマイク.capture / スピーカー.loopback を区別する。</summary>
-public sealed record AudioDevice(string DeviceName, AudioDeviceSource Source);
+/// <summary>録音デバイス。Source でマイク.capture / スピーカー.loopback を区別する。再識別は DeviceId 優先。</summary>
+public sealed record AudioDevice(string DeviceId, string DeviceName, AudioDeviceSource Source);
 
 public enum AudioDeviceSource
 {

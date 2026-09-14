@@ -27,7 +27,10 @@ public sealed class RecordingResult
 {
     public required string FilePath { get; init; }
 
-    /// <summary>Master Session Clock 基準の総録画時間（NessStudio RecordAssist 相当）。</summary>
+    /// <summary>
+    /// 論理録画時間 = Master Session Clock から Pause 時間を除外した値
+    /// （契約 §5.2 Canonical Timeline。RecordingInfo.DurationMs にそのまま入る）。
+    /// </summary>
     public required TimeSpan Duration { get; init; }
 
     /// <summary>録画開始の実時刻（tz 付き ISO 8601 で manifest 化する）。</summary>

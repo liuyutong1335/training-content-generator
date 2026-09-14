@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 共有契約モデル（docs/phase0-contract.md v1.0 FROZEN の実装）。
+       本プロジェクトの型変更は Contract 変更を伴うため、単独変更禁止（契約 §27）。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+
+</Project>

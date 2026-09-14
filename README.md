@@ -1,6 +1,7 @@
 # training-content-generator
 
 [![plan](https://img.shields.io/badge/plan-v0.2-orange)](docs/development-plan.md)
+[![contract](https://img.shields.io/badge/contract-frozen_v1-blue)](docs/phase0-contract.md)
 [![dotnet](https://img.shields.io/badge/.NET-8.0-blue)](TrainingContentGenerator.sln)
 
 デスクトップ上の業務操作（画面・システム音声・マイク音声・マウス/キーボード操作）を記録し、**トレーニング動画**（MP4）と**操作マニュアル**（Markdown / HTML）を生成・管理する **Windows デスクトップアプリ**（WPF）です。詳細は [開発計画書 v0.2](docs/development-plan.md) を参照してください。
@@ -45,6 +46,19 @@
 | Test | xUnit / `dotnet test` |
 
 OSS 利用方針・ライセンス記録は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照（OBS / ShareX は GPL のためコードを利用しない）。
+
+### 共通データ契約（Phase 0 — FROZEN）
+
+**[docs/phase0-contract.md](docs/phase0-contract.md) が Source of Truth。** 実装・設計・レビュー時は本書を優先する:
+
+- `TrainingProject` / `TimelineEvent` / `TrainingStep` / `RecordingInfo` / `ProjectOutputs` の定義（`src/TrainingContent.Core/Models/` が契約実装）
+- Timestamp: `timestampMs`（long・ミリ秒・録画開始 = 0・**Pause 時間は除外**）
+- ID は GUID。JSON 内のパスは Project 相対 + `/` 区切り（絶対パス禁止）
+- JSON は camelCase（`JsonSerializerDefaults.Web`）。`events.jsonl` は 1 Event = 1 行
+- Raw Event（append-only・編集しない）と TrainingStep（Review で編集可）を混同しない
+- Manual / Video の説明文は両方とも `TrainingStep.Description`（別々に生成しない）
+- 入力文字そのもの・Password を保存しない
+- Shared Contract の変更は Proposal → Team Review → 本書更新 → Model/Tests 更新の順（単独変更禁止）
 
 ## セットアップ
 
@@ -105,6 +119,6 @@ TrainingContentGenerator.sln
 ## 現在の状態
 
 - [x] Spike（Python・v0.1 時代）— `spike/python-recording/` にアーカイブ
-- [ ] Phase 0: Contract Freeze（TrainingProject / TimelineEvent / TrainingStep / Directory / Timestamp / Breaking Change ルール）← **ここ**
-- [ ] Phase 1: Spike A（Recording: v6.6.0 vs v7.0.1 実機比較）/ Spike B（Operation Capture）
+- [x] Phase 0: Contract Freeze — **`docs/phase0-contract.md` v1.0 FROZEN**（`TrainingContent.Core` が契約実装・`TrainingContent.Core.Tests` が §30 テスト契約）
+- [ ] Phase 1: Spike A（Recording: v6.6.0 vs v7.0.1 実機比較・`src/TrainingContent.Capture` が骨格）/ Spike B（Operation Capture）
 - [ ] Phase 2〜8: 統合録画 → Step Builder → Review UI → Manual → Video → Content Manager → E2E

@@ -34,10 +34,11 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
 
     public IReadOnlyList<DisplayDevice> GetDisplays()
     {
-        // TODO(Spike A): Recorder.GetDisplays() の実機検証 — 取得できない場合は
-        // EnumDisplayMonitors（spike/python-recording の devices.py 実装を移植）へフォールバック
+        // TODO(Spike A): Recorder.GetDisplays() の実機検証 — DeviceId が取得できない場合は
+        // DeviceName を代用し、取得できない場合は EnumDisplayMonitors
+        // （spike/python-recording の devices.py 実装を移植）へフォールバック
         return Recorder.GetDisplays()
-            .Select(d => new DisplayDevice(d.DeviceName, d.IsPrimary))
+            .Select(d => new DisplayDevice(d.DeviceName, d.DeviceName, d.IsPrimary))
             .ToList();
     }
 
@@ -45,7 +46,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     {
         // TODO(Spike A): CaptureAudioSource 側のデバイス列挙 API を確定する
         return Recorder.GetSystemAudioCaptureDevices()
-            .Select(d => new AudioDevice(d.DeviceName, AudioDeviceSource.Capture))
+            .Select(d => new AudioDevice(d.DeviceName, d.DeviceName, AudioDeviceSource.Capture))
             .ToList();
     }
 
@@ -53,7 +54,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     {
         // TODO(Spike A): LoopbackAudioSource 側のデバイス列挙 API を確定する
         return Recorder.GetSystemAudioLoopbackDevices()
-            .Select(d => new AudioDevice(d.DeviceName, AudioDeviceSource.Loopback))
+            .Select(d => new AudioDevice(d.DeviceName, d.DeviceName, AudioDeviceSource.Loopback))
             .ToList();
     }
 
@@ -124,9 +125,24 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
 
     private TaskCompletionSource<RecordingResult>? _completionSource;
 
+    /// <summary>
+    /// Pause 中の時間を除外した論理 Duration を返す（契約 §5.2:
+    /// Canonical Timeline に Pause を含めない）。
+    /// </summary>
+    private TimeSpan CanonicalDuration()
+    {
+        var elapsed = _clock.Elapsed;
+        var paused = _pauseIntervals.Sum(i => (i.End - i.Start).Ticks);
+        if (_pauseStartedAt is { } openPause)
+        {
+            paused += (elapsed - openPause).Ticks;
+        }
+        return elapsed - TimeSpan.FromTicks(paused);
+    }
+
     private RecordingResult BuildResult()
     {
-        var duration = _clock.Elapsed;
+        var duration = CanonicalDuration();
         return new RecordingResult
         {
             FilePath = _currentOptions!.OutputFilePath,
