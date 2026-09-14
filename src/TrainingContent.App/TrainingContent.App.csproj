@@ -14,8 +14,10 @@
     <AssemblyName>TrainingContent.App</AssemblyName>
   </PropertyGroup>
 
+  <!-- 依存方向: App → Storage → Core。Storage が UI を参照してはいけない。 -->
   <ItemGroup>
     <ProjectReference Include="..\TrainingContent.Core\TrainingContent.Core.csproj" />
+    <ProjectReference Include="..\TrainingContent.Storage\TrainingContent.Storage.csproj" />
   </ItemGroup>
 
 </Project>

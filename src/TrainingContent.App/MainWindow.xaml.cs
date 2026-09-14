@@ -2,13 +2,13 @@
 using System.Windows.Controls;
 using System.Windows.Media;
 using TrainingContent.App.Views;
+using TrainingContent.Storage;
 
 namespace TrainingContent.App;
 
 /// <summary>
-/// Application Shell。D1 では「表示中ページの切替」のみを担う。
-/// 業務ロジック（ProjectStore / Recording / Review 等）はここに置かない。
-/// Core Model にも依存しない。
+/// Application Shell。責任は Navigation と View composition のみ。
+/// Project 一覧の業務ロジックはここへ置かない（ContentsView の責任）。
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -16,11 +16,18 @@ public partial class MainWindow : Window
     private readonly HomeView _homeView = new();
     private readonly RecordingView _recordingView = new();
     private readonly ReviewView _reviewView = new();
-    private readonly ContentsView _contentsView = new();
+    private readonly ContentsView _contentsView;
 
-    public MainWindow()
+    public MainWindow(ProjectStore projectStore)
     {
+        ArgumentNullException.ThrowIfNull(projectStore);
+
         InitializeComponent();
+
+        // ProjectStore は App から受け取る。ここで new したり Path を組み立てたりしない。
+        _contentsView = new ContentsView(projectStore);
+        _contentsView.StatusChanged += OnContentsStatusChanged;
+
         ShowPage(NavHomeButton, _homeView);
     }
 
@@ -33,8 +40,16 @@ public partial class MainWindow : Window
     private void NavReview_Click(object sender, RoutedEventArgs e) =>
         ShowPage(NavReviewButton, _reviewView);
 
-    private void NavContents_Click(object sender, RoutedEventArgs e) =>
+    private async void NavContents_Click(object sender, RoutedEventArgs e)
+    {
         ShowPage(NavContentsButton, _contentsView);
+
+        // 初回表示時に一度だけ読み込む。2 回目以降の navigation では再走査しない。
+        await _contentsView.EnsureLoadedAsync();
+    }
+
+    private void OnContentsStatusChanged(object? sender, string message) =>
+        StatusText.Text = message;
 
     /// <summary>メイン領域の View を差し替え、選択中ナビ項目とステータスを更新する。</summary>
     private void ShowPage(Button navButton, UserControl view)

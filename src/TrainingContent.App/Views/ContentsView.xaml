@@ -6,29 +6,110 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0"
-                   Text="Contents"
-                   FontSize="24"
-                   FontWeight="SemiBold"
-                   Foreground="#FF1F2933" />
-
-        <Border Grid.Row="1" Height="1" Background="#FFE0E0E0" Margin="0,12,0,20" />
-
-        <StackPanel Grid.Row="2">
-            <TextBlock Text="Contents — 未実装"
-                       FontSize="15"
+        <!-- ===== Header ===== -->
+        <DockPanel Grid.Row="0">
+            <Button x:Name="RefreshButton"
+                    DockPanel.Dock="Right"
+                    Content="更新"
+                    Width="88" Height="30"
+                    VerticalAlignment="Center"
+                    Click="Refresh_Click" />
+            <TextBlock Text="コンテンツ管理"
+                       FontSize="24"
                        FontWeight="SemiBold"
-                       Foreground="#FF333333" />
-            <TextBlock Text="作成済みの教材を一覧・再オープン・管理する画面です。"
-                       Margin="0,10,0,0"
-                       Foreground="#FF555555"
-                       TextWrapping="Wrap" />
-            <TextBlock Text="D3 で実装します（ProjectStore / ContentIndex は D2 で用意）。"
-                       Margin="0,6,0,0"
-                       Foreground="#FF888888"
-                       TextWrapping="Wrap" />
+                       Foreground="#FF1F2933"
+                       VerticalAlignment="Center" />
+        </DockPanel>
+
+        <Border Grid.Row="1" Height="1" Background="#FFE0E0E0" Margin="0,12,0,16" />
+
+        <!-- ===== List / Loading / Empty / Error（重ねて表示を切替） ===== -->
+        <Grid Grid.Row="2">
+
+            <DataGrid x:Name="ProjectGrid"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      CanUserResizeRows="False"
+                      CanUserReorderColumns="False"
+                      CanUserSortColumns="False"
+                      HeadersVisibility="Column"
+                      GridLinesVisibility="Horizontal"
+                      HorizontalGridLinesBrush="#FFEEEEEE"
+                      BorderBrush="#FFD0D0D0"
+                      BorderThickness="1"
+                      Background="White"
+                      RowBackground="White"
+                      AlternatingRowBackground="#FFFAFBFC"
+                      SelectionChanged="ProjectGrid_SelectionChanged">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Title"
+                                        Binding="{Binding Title}"
+                                        Width="*" MinWidth="160" />
+                    <DataGridTextColumn Header="Updated"
+                                        Binding="{Binding UpdatedAtUtc.LocalDateTime, StringFormat={}{0:yyyy/MM/dd HH:mm}}"
+                                        Width="160" />
+                    <DataGridTextColumn Header="Duration"
+                                        Binding="{Binding DurationMs, Converter={StaticResource DurationConverter}}"
+                                        Width="100" />
+                    <DataGridTextColumn Header="Steps"
+                                        Binding="{Binding StepCount}"
+                                        Width="70" />
+                    <DataGridTextColumn Header="Manual"
+                                        Binding="{Binding HasManual, Converter={StaticResource ArtifactStatusConverter}}"
+                                        Width="90" />
+                    <DataGridTextColumn Header="Video"
+                                        Binding="{Binding HasVideo, Converter={StaticResource ArtifactStatusConverter}}"
+                                        Width="90" />
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <TextBlock x:Name="LoadingText"
+                       Text="読み込み中..."
+                       Foreground="#FF666666"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Visibility="Collapsed" />
+
+            <TextBlock x:Name="EmptyText"
+                       Text="保存済みのコンテンツはありません。"
+                       Foreground="#FF666666"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Visibility="Collapsed" />
+
+            <TextBlock x:Name="ErrorText"
+                       Text="コンテンツの読み込みに失敗しました。"
+                       Foreground="#FFC00000"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed" />
+        </Grid>
+
+        <!-- ===== Actions ===== -->
+        <StackPanel Grid.Row="3"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0">
+            <Button x:Name="RenameButton"
+                    Content="名前変更"
+                    Width="104" Height="30"
+                    IsEnabled="False"
+                    Click="Rename_Click" />
+            <Button x:Name="DeleteButton"
+                    Content="削除"
+                    Width="88" Height="30"
+                    Margin="8,0,0,0"
+                    IsEnabled="False"
+                    Click="Delete_Click" />
         </StackPanel>
+
     </Grid>
 </UserControl>
