@@ -10,11 +10,13 @@
 
 ## 1. 現在の進捗（2026-09-14 時点）
 
+> 更新: Gate A の自動検証（10 分録画含む）全 PASS・v7.0.1 実録比較完了。残りは手動確認（音ズレ/seek/アプリ切替の対話回答）のみ。
+
 | Phase | 項目 | 状態 |
 |---|---|---|
 | Phase 0 | Contract Freeze（全員） | ✅ 完了（契約 v1.0 FROZEN・`docs/phase0-contract.md`） |
-| Phase 1 | Spike A: Recording | 🔶 自動検証項目は合格・手動 Smoke Test 残存 |
-| Phase 1 | Spike A: v6.6.0 vs v7.0.1 実機比較 | ⬜ 未実施（6.6.0 で骨格確定済み） |
+| Phase 1 | Spike A: Recording | 🔶 自動検証全 PASS・手動確認は要対話回答 |
+| Phase 1 | Spike A: v6.6.0 vs v7.0.1 実機比較 | ✅ 実施済（§3 知見 9・10 参照。**MVP は v6.6.0 推奨**） |
 | Phase 2 | Integrated Recording | ⬜（B の EventCapture との統合） |
 
 ### Gate A チェックリスト（開発計画書 §14）
@@ -25,11 +27,11 @@
 | 録画開始 / 停止 | ✅ 実機確認済 | 10 秒・60 秒テストで MP4 生成成功 |
 | システム音声あり / マイクあり | ✅ **ユーザー確認済**（2026-09-14・無音問題をデバイス ID 解決方式で修正） | GateACheck で自動検証可 |
 | Pause / Resume | ✅ 実機確認済 | 60 秒テストで Pause 2001ms を正しく論理時間から除外（契約 §5.2 準拠） |
-| 10 分録画 | ⬜ 手動テスト待ち | `spike/gate-a-check` を `--full` モードで実施 |
+| 10 分録画 | ✅ **自動 PASS**（2026-09-14: 600.4s 実測 → 論理 595.7s・mp4 594.8s・差 0.9s） | `GateACheck --full` で再現可 |
 | 複数アプリ切替 | ⬜ 手動テスト待ち | GateACheck シナリオ 3 の録画を再生して確認 |
 | MP4 seek | ⬜ 手動テスト待ち | 生成物をプレーヤーでシークして確認（faststart は WARN・下記知見 7 参照） |
 | 明確な音ズレなし | ⬜ 手動テスト待ち | 同上 |
-| v6.6.0 vs v7.0.1 比較 | ⬜ 未実施 | csproj の PackageReference バージョンを差し替えて同一テストを実施 |
+| v6.6.0 vs v7.0.1 比較 | ✅ 実施済 | 下記 §3 知見 9・10。**MVP は v6.6.0 を推奨** |
 
 ## 2. A の成果物（実装済み）
 
@@ -69,7 +71,9 @@ new RecordingResult {
 5. マイクとシステム音声は**同一音声トラックにミックス**されて MP4 に収まる（§4 参照）
 6. v0.1 期の Python Spike（`spike/python-recording/`）からの知見: pyaudiowpatch の blocking read は生 bytes / DPI 125% 環境で `GetSystemMetrics` が仮想化値を返す / モノラルマイクはチャンネル数を収めないと失敗
 7. **IsMp4FastStartEnabled が v6.6.0 で効かない**（HW/SW エンコーダ両方で moov が末尾）。seek 自体は問題なく可能なため WARN 扱い。**v7.0.1 比較時の確認ポイント**
-8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.7s 以内を確認済み
+8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.9s 以内を確認済み
+9. **v7.0.1 は音声系が Breaking Change**: `GetSystemAudioDevices(source)` 廃止（`GetSystemAudioCaptureDevices` / `GetSystemAudioLoopbackDevices` に分離）、`AudioInputDevice`/`AudioOutputDevice` 廃止 → `AudioSources` リスト（`CaptureAudioSource` / `LoopbackAudioSource` / `ProcessAudioSource`）に一本化。`OnAudioPacketRecorded` イベント追加（将来の音ズレ検証・STT に有用）。`IRecordingEngine` 抽象は影響なし（実装差し替えで吸収可能）
+10. **v7.0.1 実録での異常**: 同一シナリオで mp4 Duration が論理時間より **3.2 秒短い**（Pause 分が二重に除外されたような値。v6.6.0 は正しく一致）。faststart は v7 でも効かず。→ **MVP は v6.6.0 を採用し、v7 は音声パイプライン再設計時に再評価**を推奨。検証ツール: `spike/v7-comparison/`
 
 ## 4. テスト状況
 

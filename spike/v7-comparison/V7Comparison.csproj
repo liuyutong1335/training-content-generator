@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Spike A: ScreenRecorderLib v7.0.1 実録比較ツール（§4.1: v6.6.0 とのフリーズ/FPS 比較）
+       同一シナリオを v7 API で実行し、gate-a-check と同じ Mp4Inspector で検査する。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ScreenRecorderLib" Version="7.0.1" />
+    <ProjectReference Include="..\..\src\TrainingContent.Capture\TrainingContent.Capture.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- gate-a-check と同じ MP4 検査器を再利用 -->
+    <Compile Include="..\gate-a-check\Mp4Inspector.cs" />
+  </ItemGroup>
+
+</Project>
