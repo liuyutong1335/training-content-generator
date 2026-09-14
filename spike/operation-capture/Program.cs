@@ -46,6 +46,10 @@ string? lastTextWindowKey = null;
 var textBuffer = new List<TextKey>();
 var textTarget = default((UiElementInfo? Element, string? ProcessName, string? WindowTitle));
 
+// Pause 時点の Canonical 時刻。Pause より前に発生したイベントが
+// ワーカースレッドで後追い処理される時、取り込まないようにするための境界。
+long? pauseBoundaryMs = null;
+
 // ---- ワーカースレッド（Hook コールバックをブロックしないため） ----
 var queue = new BlockingCollection<RawItem>();
 var worker = new Thread(ProcessQueue) { IsBackground = true };
@@ -111,7 +115,9 @@ void ProcessQueue()
 void ProcessItem(RawItem item)
 {
     // Pause 中のユーザー操作は破棄する（Canonical Timeline の外側のため。詳細は README）。
-    if (clock.IsPaused)
+    // さらに、Pause より前に発生していながら処理が追いつかず後追いで届いた
+    // イベント（例: P 押下自体のキーダウン）も破棄する。
+    if (clock.IsPaused || (pauseBoundaryMs is { } boundary && item.TimestampMs < boundary))
     {
         return;
     }
@@ -255,6 +261,7 @@ while (true)
     {
         FlushTextBuffer();
         clock.Pause();
+        pauseBoundaryMs = clock.NowMs();
         writer.Append("recording.paused", clock.NowMs(), new { });
         Console.WriteLine("-- paused --");
     }

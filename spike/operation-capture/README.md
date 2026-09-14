@@ -40,6 +40,14 @@ dotnet run --project spike/operation-capture
 - **Hook コールバックをブロックしない**: UIA・スクリーンショットは時間がかかるため、
   フックスレッドはイベントをキューに入れるだけ。処理は専用ワーカースレッドで行う。
   （Low-Level Hook は応答が遅いと Windows に外されるため）
+- **Low-Level Hook にはメッセージループが必要**: LL Hook を設置したスレッドが
+  メッセージループを回さないとコールバックが一切呼ばれない。
+  コンソールアプリにはループがないため、フック専用 STA スレッドで
+  `Application.Run()` を回し、停止時は `Application.Exit()` で抜ける。
+  （初回実行時に「イベントが 2 件しか出ない」不具合として顕在化した）
+- **Pause 境界の後追いイベントを破棄**: `P` 押下のキーダウン自体は pause 処理より
+  数 ms 先にフックされるため、Pause 時点の Canonical 時刻を境界として、
+  それより前に発生した後追いイベントは破棄する（タイムスタンプ逆転防止）。
 - **keyboard.textEntry の集約**: 連続するテキスト入力キーをバーストとして 1 Event にまとめ、
   `keyCount` を設定する（契約 §11.1 / §20 の例に合わせる形）。
   区切りは specialKey / shortcut / click / 2 秒以上の空白 / pause / stop。
@@ -69,4 +77,8 @@ UiAutomationService で、MasterClock / EventWriter / WindowInfoService / Screen
   （継続操作の終端）を StepBuilder（担当 C）がどう導くか。Raw Event 単位の区切り方と
   合わせて C と協議する（契約 §14 / §15 関連）。
 - 自プロセス除外の判定を「クリック座標のウィンドウの PID」で行っているが、
-  本実装では Record UI 経由になるため別方式になる想定。
+  コンソールを Windows Terminal 上で動かすとウィンドウの PID が Terminal 側になるため
+  除外できず、コンソール操作（P/R/S キー等）が記録されることがある。
+  本実装では Record UI が WPF（自プロセスのウィンドウ）になるため
+  この判定は機能する想定。タスクバー等シェルウィンドウも PID 解決が
+  失敗し `processName = null`（契約 §10 で許容）になる。
