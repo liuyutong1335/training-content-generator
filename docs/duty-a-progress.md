@@ -3,6 +3,7 @@
 - 担当: Liu Yutong
 - 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）
 - 作業ブランチ: `feature/capture`
+- **2026-09-14: Spike A の録画・音声（Mic + System Audio）をユーザーが実機確認済み。Gate A 確認ツール（`spike/gate-a-check`）を同ブランチの PR で提供。**
 - 本書の読み方: 同僚および同僚の AI は、A の実装状況を確認する際に本書を読む。契約事項は `docs/phase0-contract.md`（FROZEN）が優先。本書は進捗・知見・未決事項の記録。
 
 ---
