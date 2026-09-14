@@ -71,6 +71,18 @@ class ScreenRecorder:
             raise CaptureError("録画を開始する前に output_path は取得できません")
         return self._final_path
 
+    @property
+    def fps(self) -> int:
+        return self._config.fps
+
+    @property
+    def resolution(self) -> str:
+        """録画領域を "WxH" で返す（全デスクトップ時は仮想スクリーン全体）。"""
+        from .devices import virtual_screen_area
+
+        area = self._config.screen_area or virtual_screen_area()
+        return f"{area.width}x{area.height}"
+
     def start(self) -> None:
         """録画を開始する。既に開始済みなら CaptureError。"""
         if self._proc is not None:

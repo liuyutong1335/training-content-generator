@@ -89,12 +89,18 @@ class Timeline(BaseModel):
 
 
 class RecordingFile(BaseModel):
-    """Raw Media 1 ファイル分の参照情報。"""
+    """Raw Media 1 トラック分の参照情報（A→B の受け渡し契約）。
+
+    path は完成 MP4 ではなくトラック単位の原素材を指す（NessStudio 流の
+    independent tracks）。B は start_offset_ms を使って master clock に揃えて mix する。
+    """
 
     kind: SourceKind
     path: str  # プロジェクトルート相対パス
-    offset_ms: NonNegativeInt = 0  # 録画開始（Recorder.start）からの開始ずれ
+    start_offset_ms: NonNegativeInt = 0  # 録画開始（Recorder.start）からの開始ずれ
     duration_ms: NonNegativeInt = 0  # ソース個別の実記録時間
+    sample_rate: Optional[int] = None  # 音声トラックのみ
+    channels: Optional[int] = None  # 音声トラックのみ
     note: str = ""
 
 
@@ -106,8 +112,10 @@ class RecordingManifest(BaseModel):
 
     project_id: str = Field(min_length=1)
     recording_id: str = Field(min_length=1)
-    started_at: datetime  # 実時間（tz 付き）
+    started_at: datetime  # Master Session Clock の起点（実時間・tz 付き）
     duration_ms: NonNegativeInt
+    fps: Optional[int] = None
+    screen_resolution: Optional[str] = None  # 例: "1920x1080"（全デスクトップ時は仮想スクリーン全体）
     status: RecordingStatus = RecordingStatus.COMPLETED
     files: list[RecordingFile] = Field(default_factory=list)
     schema_version: str = SCHEMA_VERSION

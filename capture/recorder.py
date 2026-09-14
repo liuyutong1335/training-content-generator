@@ -85,14 +85,16 @@ class Recorder:
                 continue
             try:
                 duration_ms = sink.stop()
-                files.append(
-                    RecordingFile(
-                        kind=kind,
-                        path=sink.output_path.relative_to(self._project_dir).as_posix(),
-                        offset_ms=self._offsets[kind],
-                        duration_ms=duration_ms,
-                    )
+                file = RecordingFile(
+                    kind=kind,
+                    path=sink.output_path.relative_to(self._project_dir).as_posix(),
+                    start_offset_ms=self._offsets[kind],
+                    duration_ms=duration_ms,
                 )
+                if kind is not SourceKind.SCREEN:  # 音声トラックは音響パラメータも渡す
+                    file.sample_rate = sink.sample_rate
+                    file.channels = sink.channels
+                files.append(file)
             except Exception as exc:
                 status = RecordingStatus.FAILED
                 files.append(
@@ -100,12 +102,17 @@ class Recorder:
                 )
         duration_ms = int((time.monotonic() - self._start_monotonic) * 1000)
         started_at = self._started_at
+        screen_sink = self._sinks.get(SourceKind.SCREEN)
+        fps = screen_sink.fps if screen_sink is not None else None
+        screen_resolution = screen_sink.resolution if screen_sink is not None else None
         self._reset()
         manifest = RecordingManifest(
             project_id=project_id,
             recording_id=recording_id or uuid.uuid4().hex[:12],
             started_at=started_at,
             duration_ms=duration_ms,
+            fps=fps,
+            screen_resolution=screen_resolution,
             status=status,
             files=files,
         )

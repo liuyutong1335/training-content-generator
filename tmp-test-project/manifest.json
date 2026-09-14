@@ -1,0 +1,39 @@
+{
+  "project_id": "default",
+  "recording_id": "384984f78c35",
+  "started_at": "2026-09-14T04:44:18.309221Z",
+  "duration_ms": 5,
+  "fps": 30,
+  "screen_resolution": "1280x720",
+  "status": "completed",
+  "files": [
+    {
+      "kind": "screen",
+      "path": "raw/screen.bin",
+      "start_offset_ms": 1,
+      "duration_ms": 5000,
+      "sample_rate": null,
+      "channels": null,
+      "note": ""
+    },
+    {
+      "kind": "system_audio",
+      "path": "raw/system_audio.bin",
+      "start_offset_ms": 3,
+      "duration_ms": 5000,
+      "sample_rate": 48000,
+      "channels": 2,
+      "note": ""
+    },
+    {
+      "kind": "microphone",
+      "path": "raw/microphone.bin",
+      "start_offset_ms": 4,
+      "duration_ms": 5000,
+      "sample_rate": 48000,
+      "channels": 2,
+      "note": ""
+    }
+  ],
+  "schema_version": "0.1.0-draft"
+}

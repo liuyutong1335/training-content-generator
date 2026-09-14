@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from capture import CaptureError
+from capture.recorder import Recorder
 from capture.screen import build_gdigrab_args, resolve_ffmpeg
 from core.models import (
     RecordingConfig,
@@ -105,6 +107,87 @@ class TestTimeline:
             )
 
 
+class TestRecorder:
+    """Recorder の manifest 組み立てを fake sink で検証（デバイス非依存）。"""
+
+    class _FakeSink:
+        def __init__(self, out_dir, name="fake", fail=False):
+            self._out_dir = out_dir
+            self._name = name
+            self._fail = fail
+            self.stopped = False
+
+        def start(self):
+            self._out_dir.mkdir(parents=True, exist_ok=True)
+            self._file = self._out_dir / f"{self._name}.bin"
+            self._file.write_bytes(b"")
+
+        def stop(self):
+            if self._fail:
+                raise CaptureError("fake stop 失敗")
+            self.stopped = True
+            return 5000
+
+        @property
+        def output_path(self):
+            return self._file
+
+        fps = 30
+        resolution = "1280x720"
+        sample_rate = 48000
+        channels = 2
+
+    def _make_recorder(self, monkeypatch, mic_fail=False):
+        import capture.recorder as mod
+
+        def screen_factory(config, out_dir, ffmpeg_path=None):
+            return self._FakeSink(out_dir, "screen")
+
+        def sys_factory(config, out_dir):
+            return self._FakeSink(out_dir, "system_audio")
+
+        def mic_factory(config, out_dir):
+            return self._FakeSink(out_dir, "microphone", fail=mic_fail)
+
+        monkeypatch.setattr(mod, "ScreenRecorder", screen_factory)
+        monkeypatch.setattr(mod, "SystemAudioRecorder", sys_factory)
+        monkeypatch.setattr(mod, "MicRecorder", mic_factory)
+        return mod.Recorder(RecordingConfig(), Path("tmp-test-project"))
+
+    def test_manifest_built_from_sinks(self, monkeypatch, tmp_path):
+        rec = self._make_recorder(monkeypatch)
+        rec.start()
+        manifest = rec.stop(project_id="test")
+        assert manifest.status == RecordingStatus.COMPLETED
+        assert manifest.fps == 30 and manifest.screen_resolution == "1280x720"
+        kinds = {f.kind for f in manifest.files}
+        assert kinds == {SourceKind.SCREEN, SourceKind.SYSTEM_AUDIO, SourceKind.MICROPHONE}
+        audio = [f for f in manifest.files if f.kind != SourceKind.SCREEN]
+        assert all(f.sample_rate == 48000 and f.channels == 2 for f in audio)
+        # manifest.json がプロジェクトディレクトリに書き出される
+        assert Path("tmp-test-project/manifest.json").exists()
+
+    def test_single_sink_failure_marks_failed(self, monkeypatch):
+        rec = self._make_recorder(monkeypatch, mic_fail=True)
+        rec.start()
+        manifest = rec.stop(project_id="test")
+        assert manifest.status == RecordingStatus.FAILED
+        mic = [f for f in manifest.files if f.kind == SourceKind.MICROPHONE][0]
+        assert "stop 失敗" in mic.note
+
+    def test_stop_without_start(self):
+        rec = Recorder(RecordingConfig(), Path("tmp-test-project"))
+        with pytest.raises(CaptureError):
+            rec.stop()
+
+    def test_double_start(self, monkeypatch):
+        rec = self._make_recorder(monkeypatch)
+        rec.start()
+        with pytest.raises(CaptureError):
+            rec.start()
+        rec.stop()
+
+
 class TestRecordingManifest:
     def _manifest(self, **overrides):
         base = dict(
@@ -114,9 +197,10 @@ class TestRecordingManifest:
             duration_ms=60_000,
             files=[
                 RecordingFile(kind=SourceKind.SCREEN, path="raw/screen.mp4",
-                              offset_ms=120, duration_ms=59_880),
+                              start_offset_ms=120, duration_ms=59_880),
                 RecordingFile(kind=SourceKind.MICROPHONE, path="raw/microphone.wav",
-                              offset_ms=350, duration_ms=59_600),
+                              start_offset_ms=350, duration_ms=59_600,
+                              sample_rate=48000, channels=1),
             ],
         )
         base.update(overrides)

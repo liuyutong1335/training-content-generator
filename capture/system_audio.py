@@ -1,18 +1,24 @@
 """システム音声録音（R-02 前半）。
 
 PyAudioWPatch の WASAPI loopback で PC 再生音をそのまま記録する。
-WAV (PCM16) で書き出し、正常停止時に .tmp → リネームする。
+callback を使わず blocking stream read を専用スレッドで回す
+（PyAudioWPatch は callback マルチスレッドでの host error 報告があるため、
+まず最も単純な blocking read で安定させる）。
+WAV (PCM16) で書き出し、正常停止時に .tmp → os.replace リネームする。
 """
 
 from __future__ import annotations
 
 import os
+import threading
 import wave
 from pathlib import Path
 
 from core.models import RecordingConfig
 
 from . import CaptureError
+
+_CHUNK_FRAMES = 1024
 
 
 class SystemAudioRecorder:
@@ -25,14 +31,22 @@ class SystemAudioRecorder:
         self._stream = None
         self._pyaudio = None
         self._final_path: Path | None = None
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self._frames_written = 0
         self._rate = 0
+        self.channels = 0  # Recorder が manifest に書き写す
+        self.error: Exception | None = None
 
     @property
     def output_path(self) -> Path:
         if self._final_path is None:
             raise CaptureError("録画を開始する前に output_path は取得できません")
         return self._final_path
+
+    @property
+    def sample_rate(self) -> int:
+        return self._rate
 
     def start(self) -> None:
         if self._wave is not None:
@@ -49,36 +63,51 @@ class SystemAudioRecorder:
         try:
             device = self._find_default_loopback()
             self._rate = int(device["defaultSampleRate"])
-            channels = min(int(device["maxInputChannels"]), self._config.channels)
+            self.channels = min(int(device["maxInputChannels"]), self._config.channels)
             self._wave = wave.open(str(self._tmp_path(self._final_path)), "wb")
-            self._wave.setnchannels(channels)
+            self._wave.setnchannels(self.channels)
             self._wave.setsampwidth(2)  # PCM16
             self._wave.setframerate(self._rate)
             self._frames_written = 0
-
-            def _callback(in_data, _frame_count, _time_info, status):  # noqa: ANN001
-                self._frames_written += _frame_count
-                self._wave.writeframes(in_data)
-                return (None, pyaudio.paContinue)
+            self._stop_event.clear()
 
             self._stream = self._pyaudio.open(
                 format=pyaudio.paInt16,
-                channels=channels,
+                channels=self.channels,
                 rate=self._rate,
                 input=True,
                 input_device_index=int(device["index"]),
-                stream_callback=_callback,
             )
+            self._thread = threading.Thread(target=self._record_loop, daemon=True)
+            self._thread.start()
         except Exception as exc:
             self._release()
             raise CaptureError(f"システム音声の録音を開始できません: {exc}") from exc
+
+    def _record_loop(self) -> None:
+        """blocking read で WAV に書き続ける専用スレッド。"""
+        try:
+            while not self._stop_event.is_set():
+                # pyaudiowpatch の blocking read は生の bytes を返す（overflow フラグ無し）
+                data = self._stream.read(_CHUNK_FRAMES)
+                self._frames_written += len(data) // (2 * self.channels)  # PCM16
+                self._wave.writeframes(data)
+        except Exception as exc:  # read 失敗は stop() で検知させる
+            self.error = exc
 
     def stop(self) -> int:
         """録音を停止し、記録ミリ秒を返す。"""
         if self._wave is None or self._stream is None:
             raise CaptureError("システム音声録音は開始されていません")
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+        if isinstance(self.error, CaptureError):
+            raise self.error
+        if self.error is not None:
+            raise CaptureError(f"システム音声の記録中にエラー: {self.error}")
         try:
-            self._stream.stop_stream()
             self._stream.close()
             self._stream = None
             self._wave.close()
