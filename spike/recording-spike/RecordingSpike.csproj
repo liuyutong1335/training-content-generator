@@ -1,21 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Spike A: ScreenRecorderLib 実機検証用 console app（開発計画書 §14 / Gate A）
+       使い方: dotnet run -p:Platform=x64 （引数に出力 mp4 パス）
+       v6.6.0 と v7.0.1 の比較はこのプロジェクトの PackageReference を差し替えて行う。 -->
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <IsPackable>false</IsPackable>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="xunit" Version="2.9.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
-  </ItemGroup>
-
-  <ItemGroup>
+    <PackageReference Include="ScreenRecorderLib" Version="6.6.0" />
     <ProjectReference Include="..\..\src\TrainingContent.Capture\TrainingContent.Capture.csproj" />
   </ItemGroup>
 

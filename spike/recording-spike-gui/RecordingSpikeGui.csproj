@@ -1,20 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- 担当 A: Recording Engine (開発計画書 §16 / §24) -->
+  <!-- Spike A 用の録画テスト GUI（担当 A の検証ツール。正式な Recording UI は D 担当 §18） -->
   <PropertyGroup>
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>12</LangVersion>
-    <!-- ScreenRecorderLib は AnyCPU 非対応（targets でチェックされる）ため x64 を明示 -->
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Spike A で v6.6.0 と v7.0.1 を実機比較する（計画書 §4.1 / Issue #374）。
-         初期は安定側の 6.6.0 に固定。 -->
     <PackageReference Include="ScreenRecorderLib" Version="6.6.0" />
+    <ProjectReference Include="..\..\src\TrainingContent.Capture\TrainingContent.Capture.csproj" />
   </ItemGroup>
 
 </Project>

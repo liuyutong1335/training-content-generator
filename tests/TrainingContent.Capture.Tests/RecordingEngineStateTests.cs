@@ -10,19 +10,18 @@ namespace TrainingContent.Capture.Tests;
 public class RecordingEngineStateTests
 {
     [Fact]
-    public void Stop_BeforeStart_Throws()
+    public async Task Stop_BeforeStart_Throws()
     {
         // ScreenRecorderRecordingEngine は StartAsync 前に StopAsync を受け付けない
-        // （実装確定は Spike A。ここでは契約レベルの期待値を固定する）
         var engine = new ScreenRecorderRecordingEngine();
-        Assert.ThrowsAsync<InvalidOperationException>(() => engine.StopAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => engine.StopAsync());
     }
 
     [Fact]
-    public void Pause_BeforeStart_Throws()
+    public async Task Pause_BeforeStart_Throws()
     {
         var engine = new ScreenRecorderRecordingEngine();
-        Assert.ThrowsAsync<InvalidOperationException>(() => engine.PauseAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => engine.PauseAsync());
     }
 
     [Fact]

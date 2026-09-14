@@ -13,7 +13,7 @@ public interface IRecordingEngine
 
     IReadOnlyList<AudioDevice> GetSystemAudioDevices();
 
-    /// <summary>録画を開始する（R-01/R-02/R-03: 画面＋システム音声＋マイク）。</summary>
+    /// <summary>録画を開始する（R-01/R-02/R-03: 画面＋システム音声＋マイク）。開始が完了したら戻る。</summary>
     Task StartAsync(RecordingOptions options, CancellationToken cancellationToken = default);
 
     Task PauseAsync(CancellationToken cancellationToken = default);
@@ -21,7 +21,8 @@ public interface IRecordingEngine
     Task ResumeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 録画を停止し、Recording を確定する（計画書 §11: raw/recording.mp4 + manifest）。
+    /// 録画を停止し、Recording を確定する（契約 §11: raw/recording.mp4 + project.json の RecordingInfo）。
+    /// 録画完了時に RecordingResult を返す。
     /// </summary>
     Task<RecordingResult> StopAsync(CancellationToken cancellationToken = default);
 
