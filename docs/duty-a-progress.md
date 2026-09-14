@@ -22,11 +22,11 @@
 |---|---|---|
 | デバイス列挙（Display / Mic / System Audio） | ✅ 実機確認済 | `IRecordingEngine.Get*()` 3 メソッド |
 | 録画開始 / 停止 | ✅ 実機確認済 | 10 秒・60 秒テストで MP4 生成成功 |
-| システム音声あり / マイクあり | 🔶 動作確認中 | 無音問題をデバイス ID 解決方式で修正済み・要再確認 |
+| システム音声あり / マイクあり | ✅ **ユーザー確認済**（2026-09-14・無音問題をデバイス ID 解決方式で修正） | GateACheck で自動検証可 |
 | Pause / Resume | ✅ 実機確認済 | 60 秒テストで Pause 2001ms を正しく論理時間から除外（契約 §5.2 準拠） |
-| 10 分録画 | ⬜ 手動テスト待ち | `spike/recording-spike` を使用 |
-| 複数アプリ切替 | ⬜ 手動テスト待ち | 同上 |
-| MP4 seek | ⬜ 手動テスト待ち | `IsMp4FastStartEnabled = true` 済。生成物をプレーヤーでシークして確認 |
+| 10 分録画 | ⬜ 手動テスト待ち | `spike/gate-a-check` を `--full` モードで実施 |
+| 複数アプリ切替 | ⬜ 手動テスト待ち | GateACheck シナリオ 3 の録画を再生して確認 |
+| MP4 seek | ⬜ 手動テスト待ち | 生成物をプレーヤーでシークして確認（faststart は WARN・下記知見 7 参照） |
 | 明確な音ズレなし | ⬜ 手動テスト待ち | 同上 |
 | v6.6.0 vs v7.0.1 比較 | ⬜ 未実施 | csproj の PackageReference バージョンを差し替えて同一テストを実施 |
 
@@ -41,6 +41,7 @@ src/TrainingContent.Capture/
 
 spike/recording-spike/       CLI 実機検証ツール（引数: 出力先 [秒数] [nopause]）
 spike/recording-spike-gui/   WPF 検証 GUI（デバイス選択・開始/一時停止/再開/停止）
+spike/gate-a-check/          Gate A 自動判定ツール（MP4 解析・3 シナリオ + 手動確認プロンプト）
 ```
 
 ### B・C・D へのインターフェース（これが A→全体の受け渡し形）
@@ -66,6 +67,8 @@ new RecordingResult {
 4. `StartAsync` は**開始時に戻る**。録画完了の受取は `StopAsync` の戻り値または `OnRecordingComplete` で行う
 5. マイクとシステム音声は**同一音声トラックにミックス**されて MP4 に収まる（§4 参照）
 6. v0.1 期の Python Spike（`spike/python-recording/`）からの知見: pyaudiowpatch の blocking read は生 bytes / DPI 125% 環境で `GetSystemMetrics` が仮想化値を返す / モノラルマイクはチャンネル数を収めないと失敗
+7. **IsMp4FastStartEnabled が v6.6.0 で効かない**（HW/SW エンコーダ両方で moov が末尾）。seek 自体は問題なく可能なため WARN 扱い。**v7.0.1 比較時の確認ポイント**
+8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.7s 以内を確認済み
 
 ## 4. テスト状況
 
@@ -92,4 +95,8 @@ spike\recording-spike\bin\x64\Debug\net8.0-windows\win-x64\RecordingSpike.exe te
 
 # GUI 実機テスト（デバイス選択・開始/停止ボタン）
 spike\recording-spike-gui\bin\x64\Debug\net8.0-windows\win-x64\RecordingSpikeGui.exe
+
+# Gate A 確認（自動シナリオ + 手動確認プロンプト。10 分録画も含める場合）
+spike\gate-a-check\bin\x64\Debug\net8.0-windows\win-x64\GateACheck.exe
+spike\gate-a-check\bin\x64\Debug\net8.0-windows\win-x64\GateACheck.exe --full
 ```

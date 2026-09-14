@@ -16,6 +16,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     private readonly List<(TimeSpan Start, TimeSpan End)> _pauseIntervals = [];
     private TimeSpan? _pauseStartedAt;
     private RecordingState _state = RecordingState.Idle;
+    private bool _captureStarted; // 実際の撮影開始（RecorderStatus.Recording）を検出したか
     private TaskCompletionSource<RecordingResult>? _completionSource;
 
     public event EventHandler<RecordingStateChangedEventArgs>? StateChanged;
@@ -73,7 +74,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         _completionSource = new TaskCompletionSource<RecordingResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         _recorder.Record(options.OutputFilePath);
         _startedAtUtc = DateTimeOffset.UtcNow;
-        _clock.Restart();
+        _captureStarted = false; // OnStatusChanged で Recording になった瞬間（=実際の撮影開始）に時計を合わせる
         State = RecordingState.Recording;
         return Task.CompletedTask;
     }
@@ -186,7 +187,9 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
             {
                 Framerate = options.FrameRate,
                 IsHardwareEncodingEnabled = true,
-                IsMp4FastStartEnabled = true, // Gate A の MP4 seek 対応
+                // MP4 faststart（moov を先頭へ）= seek に強い。fragmented MP4 では効かないため明示的に無効化
+                IsMp4FastStartEnabled = true,
+                IsFragmentedMp4Enabled = false,
             },
         };
     }
@@ -206,9 +209,12 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
 
     private void OnStatusChanged(object? sender, RecordingStatusEventArgs e)
     {
-        // エンジン側の状態遷移とライブラリの状態を同期する（停止リクエストの二重管理を避ける）
-        if (_state == RecordingState.Stopping && e.Status == RecorderStatus.Finishing)
+        // WGC の初期化には ~2 秒かかるため、Canonical Timeline（録画開始 = 0ms・契約 §5.1）
+        // は「実際に撮影が始まった瞬間」に時計を合わせてから測る
+        if (e.Status == RecorderStatus.Recording && !_captureStarted)
         {
+            _captureStarted = true;
+            _clock.Restart();
             return;
         }
     }
