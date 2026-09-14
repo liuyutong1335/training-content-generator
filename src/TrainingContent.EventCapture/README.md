@@ -39,8 +39,9 @@ long durationMs = session.Stop(); // recording.stopped、論理時間を返す
 | `UiAutomation/UiAutomationService.cs` | クリック座標・フォーカスの UI 要素取得 | OpenSteps 部分移植 |
 | `MasterClock.cs` | Canonical Timeline（0ms 始点 / Pause 除外） | 独自実装 |
 | `EventTimelineWriter.cs` | events.jsonl（1 行 1 Event / camelCase / seq 単調増加） | 独自実装 |
+| `TextEntryAggregator.cs` | textEntry バースト集約 + Password 保護 | 独自実装 |
 | `WindowInfo/WindowInfoService.cs` | プロセス名・ウィンドウタイトル | OpenSteps 参考で最小化 |
-| `Screenshot/ScreenshotCapture.cs` | デスクトップ撮影 + クリックハイライト | OpenSteps 参考で最小化 |
+| `Screenshot/ScreenshotCapture.cs` | デスクトップ撮影 + クリックハイライト（Per-Monitor DPI 対応） | OpenSteps 参考で最小化 |
 | `OperationCaptureSession.cs` | 上記の統合・スレッド制御・自プロセス除外 | 独自実装 |
 
 移植記録（参照 Commit・改変内容）はリポジトリルートの `THIRD_PARTY_NOTICES.md` を参照。
@@ -51,8 +52,14 @@ long durationMs = session.Stop(); // recording.stopped、論理時間を返す
   回す。フックスレッドをブロックすると Windows にフックを外されるため、重い処理（UIA・撮影）は
   ワーカースレッドへ分離。
 - **keyboard.textEntry の集約**: 連続するテキストキーをバーストで 1 Event にまとめ `keyCount`
-  を設定（契約 §11.1 / §20）。Password 判定バーストは `keyCount = null` + `isSensitive = true`。
-  実入力文字はそもそも取得しない（契約 §11.1 / §27）。
+  を設定（契約 §11.1 / §20）。集約ロジックは `TextEntryAggregator` に独立させて単体テスト可能。
+- **Password 保護は毎キー判定**（契約 §11.1 / §27）: バースト内に 1 つでもパスワード欄のキーが
+  含まれれば `keyCount = null` + `isSensitive = true`（バースト途中でパスワ欄へ移った場合も
+  文字数を保存しない）。実入力文字はそもそも取得しない。
+- **日本語 IME 対応**: IME 変換中のキーは `VK_PROCESSKEY` (0xE5) に置き換わるため、
+  これを Text 入力として分類する（対応しないと日本語入力が一切記録されない）。
+- **DPI 対応**: 撮影スレッドのみ `SetThreadDpiAwarenessContext(Per-Monitor V2)` に切り替え、
+  125%/150% 等の表示スケール環境でもフック座標（常に物理ピクセル）と同じ座標系で撮影する。
 - **UIA 失敗時も Event を破棄しない**（契約 §10）。撮影失敗も同様。
 - **Pause 中の操作・Pause 直前の後追いイベントは破棄**（Canonical Timeline の外側、契約 §5.2）。
 
@@ -62,7 +69,8 @@ long durationMs = session.Stop(); // recording.stopped、論理時間を返す
 dotnet test tests/TrainingContent.EventCapture.Tests
 ```
 
-`MasterClock`（Pause 論理）と `EventTimelineWriter`（出力形式）の単体テスト。
+`MasterClock`（Pause 論理）、`EventTimelineWriter`（出力形式）、`TextEntryAggregator`
+（バースト集約 + Password 保護）の単体テスト。
 実機での操作取得検証は `spike/operation-capture/`（Spike B）で完了済み — Gate B 8 項目 PASS。
 
 ## 担当 D への依頼

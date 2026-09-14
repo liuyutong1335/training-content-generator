@@ -25,6 +25,7 @@ MIT のコードをコピー・改変した場合も、著作権表示および�
   - `Hooks/GlobalKeyboardHook.cs` — src/OpenSteps.Capture/GlobalKeyboardHook.cs + KeyboardInputEventArgs.cs をコピー（特殊キー名を契約 §11.2 の表記に合わせた）
   - `UiAutomation/UiAutomationService.cs` — src/OpenSteps.Capture/UiAutomationService.cs をコピー（namespace 変更のみ）
   - `UiAutomation/UiElementInfo.cs` — src/OpenSteps.Core/Models/UiElementInfo.cs をコピー
+  - `Screenshot/ScreenshotCapture.cs` — src/OpenSteps.Capture/DpiAwarenessService.cs の Per-Monitor V2 スレッド切替方式を参考
   - `WindowInfoService.cs` — src/OpenSteps.Capture/ActiveWindowService.cs を参考に最小化
   - `ScreenshotCapture.cs` — src/OpenSteps.Capture/ScreenshotService.cs を参考に最小化
 - 参照 Commit SHA: 8058980865ac07f261b97b7270776c486b942a16

@@ -55,6 +55,12 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     internal static partial short GetAsyncKeyState(int virtualKey);
 
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
+
+    // Win32 の DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    internal static readonly IntPtr PerMonitorAwareV2Context = new(-4);
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct POINT
     {

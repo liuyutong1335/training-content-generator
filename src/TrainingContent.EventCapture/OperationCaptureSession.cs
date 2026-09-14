@@ -38,7 +38,7 @@ public sealed class OperationCaptureSession : IDisposable
     private readonly BlockingCollection<RawItem> _queue = new();
     private readonly object _stateSync = new();
     private readonly object _textSync = new();
-    private readonly List<TextKey> _textBuffer = [];
+    private readonly TextEntryAggregator _textAggregator = new();
     private readonly uint _ownProcessId = (uint)Environment.ProcessId;
 
     private EventTimelineWriter? _writer;
@@ -144,7 +144,7 @@ public sealed class OperationCaptureSession : IDisposable
             _hookThread!.Join(5000);
             _writer!.Append("recording.stopped", durationMs, new { });
             _queue.CompleteAdding();
-            _worker!.Join(3000);
+            _worker!.Join(15000); // 終端イベントの取りこぼし防止（UIA・撮影は 1 Event 百ms 級）
             return durationMs;
         }
     }
@@ -296,26 +296,27 @@ public sealed class OperationCaptureSession : IDisposable
 
                 lock (_textSync)
                 {
-                    // バースト先頭またはウィンドウが変わった時点でフォーカス要素を取得
-                    // （Password 判定と target 用。スパイクでの簡略化を踏襲）。
+                    // Password 判定は毎キー行う（バースト途中でパスワード欄へ
+                    // 移った場合も keyCount 漏れがないように。契約 §11.1）。
+                    // target はバースト先頭のフォーカス要素を使う。
+                    var focused = _uiAutomation!.GetFocusedElement();
                     var windowKey = $"{window.ProcessId}:{window.WindowTitle}";
-                    if (_textBuffer.Count == 0 || _lastTextWindowKey != windowKey)
+                    if (_textAggregator.IsEmpty || _lastTextWindowKey != windowKey)
                     {
-                        _textTarget = (_uiAutomation!.GetFocusedElement(), window.ProcessName, window.WindowTitle);
+                        _textTarget = (focused, window.ProcessName, window.WindowTitle);
                         _lastTextWindowKey = windowKey;
                     }
 
-                    _textBuffer.Add(new TextKey(
+                    var isPassword = focused.IsPassword;
+                    var flushed = _textAggregator.Add(
                         item.TimestampMs,
-                        _textTarget.Element?.IsPassword == true,
+                        isPassword,
+                        ToTargetPayload(_textTarget.Element),
                         window.ProcessName,
-                        window.WindowTitle));
-
-                    // 入力が途切れたらバーストを閉じる（別ウィンドウ / 2 秒以上の空白）。
-                    if (_textBuffer.Count > 1
-                        && item.TimestampMs - _textBuffer[^2].TimestampMs > 2000)
+                        window.WindowTitle);
+                    if (flushed is not null)
                     {
-                        FlushTextBuffer();
+                        _writer!.Append("keyboard.textEntry", flushed.StartTimestampMs, flushed.Payload);
                     }
                 }
 
@@ -342,31 +343,24 @@ public sealed class OperationCaptureSession : IDisposable
         }
     }
 
-    /// <summary>
-    /// 連続するテキスト入力キーを 1 つの keyboard.textEntry Event にまとめる
-    /// （契約 §11.1 の keyCount / §20 の例に対応）。実入力文字は取得しない。
-    /// Password 判定のバーストは keyCount = null + isSensitive = true。
-    /// </summary>
+    /// <summary>保持中の textEntry バーストを締め切って events.jsonl に出力する。</summary>
     private void FlushTextBuffer()
     {
-        if (_textBuffer.Count == 0 || _writer is null)
+        if (_writer is null)
         {
             return;
         }
 
-        var isSensitive = _textBuffer.Any(k => k.IsPassword);
-        var payload = new TextEntryPayload(
-            isSensitive ? null : _textBuffer.Count,
-            _textBuffer[0].ProcessName,
-            _textBuffer[0].WindowTitle,
-            !isSensitive && _textTarget.Element is { } el
-                ? new TargetPayload(el.Name, el.AutomationId, el.ControlType)
-                : null,
-            isSensitive);
-        _writer.Append("keyboard.textEntry", _textBuffer[0].TimestampMs, payload);
-        _textBuffer.Clear();
-        _textTarget = default;
-        _lastTextWindowKey = null;
+        lock (_textSync)
+        {
+            var flushed = _textAggregator.Flush();
+            if (flushed is not null)
+            {
+                _writer.Append("keyboard.textEntry", flushed.StartTimestampMs, flushed.Payload);
+            }
+
+            _lastTextWindowKey = null;
+        }
     }
 
     private bool IsFiltered(WindowInfo.WindowInfo window)
@@ -387,6 +381,13 @@ public sealed class OperationCaptureSession : IDisposable
             info.Bounds is { } b ? new BoundsPayload(b.X, b.Y, b.Width, b.Height) : null);
     }
 
+    private static TargetPayload? ToTargetPayload(UiElementInfo? element)
+    {
+        return element is null
+            ? null
+            : new TargetPayload(element.Name, element.AutomationId, element.ControlType);
+    }
+
     private static class RawKind
     {
         public const string Mouse = "mouse";
@@ -402,10 +403,4 @@ public sealed class OperationCaptureSession : IDisposable
         KeyboardInputKind KeyKind = KeyboardInputKind.Text,
         string? KeyName = null,
         string? ShortcutName = null);
-
-    private sealed record TextKey(
-        long TimestampMs,
-        bool IsPassword,
-        string? ProcessName,
-        string? WindowTitle);
 }

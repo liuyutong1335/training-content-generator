@@ -5,7 +5,9 @@
 // Commit: 8058980865ac07f261b97b7270776c486b942a16
 // Modification: namespace changed; special-key names aligned with the Phase 0 contract
 //               MVP list (Enter/Tab/Escape/Backspace/Delete/Left/Right/Up/Down).
-//               Key classification logic itself is unchanged.
+//               VK_PROCESSKEY (0xE5, IME 変換中のキー) を Text 入力として分類するよう追加
+//               （IME 有効時は通常の印刷可能キーが VK_PROCESSKEY に置き換わるため、
+//                 そのままだと日本語入力が一切記録されない）。
 //               実入力文字は取得しない（契約 §11.1 / §27 セキュリティ方針）。
 using System.Runtime.InteropServices;
 
@@ -145,7 +147,9 @@ public sealed class GlobalKeyboardHook : IDisposable
             return null;
         }
 
-        if (IsPrintableTypingKey(vkCode) || vkCode == 0x20)
+        // VK_PROCESSKEY (0xE5): IME がキーを消費した合図。実文字は取得できないが
+        // 「テキスト入力があった」ことは記録できる（日本語 IME 対応）。
+        if (IsPrintableTypingKey(vkCode) || vkCode == 0x20 || vkCode == 0xE5)
         {
             return new KeyboardInputEventArgs(KeyboardInputKind.Text, shift ? "Shift+Text" : "Text", null);
         }
