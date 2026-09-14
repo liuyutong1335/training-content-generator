@@ -3,19 +3,19 @@
 - 担当: Liu Yutong
 - 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）
 - 作業ブランチ: `feature/capture`
-- **2026-09-14: Spike A の録画・音声（Mic + System Audio）をユーザーが実機確認済み。Gate A 確認ツール（`spike/gate-a-check`）を同ブランチの PR で提供。**
+- **2026-09-14: ✅ GATE A 確定 — Spike A 完了。** 自動検証（10 分録画含む）全 PASS + 手動確認（音ズレ / seek / 各音声 / アプリ切替）もユーザーが確認済み。
 - 本書の読み方: 同僚および同僚の AI は、A の実装状況を確認する際に本書を読む。契約事項は `docs/phase0-contract.md`（FROZEN）が優先。本書は進捗・知見・未決事項の記録。
 
 ---
 
 ## 1. 現在の進捗（2026-09-14 時点）
 
-> 更新: Gate A の自動検証（10 分録画含む）全 PASS・v7.0.1 実録比較完了。残りは手動確認（音ズレ/seek/アプリ切替の対話回答）のみ。
+> 更新: **Gate A 完了** — 自動検証（10 分録画含む）+ 手動確認すべて PASS。次は Phase 2（B の EventCapture との統合）。
 
 | Phase | 項目 | 状態 |
 |---|---|---|
 | Phase 0 | Contract Freeze（全員） | ✅ 完了（契約 v1.0 FROZEN・`docs/phase0-contract.md`） |
-| Phase 1 | Spike A: Recording | 🔶 自動検証全 PASS・手動確認は要対話回答 |
+| Phase 1 | Spike A: Recording | ✅ **GATE A PASS**（自動検証 + 手動確認完了） |
 | Phase 1 | Spike A: v6.6.0 vs v7.0.1 実機比較 | ✅ 実施済（§3 知見 9・10 参照。**MVP は v6.6.0 推奨**） |
 | Phase 2 | Integrated Recording | ⬜（B の EventCapture との統合） |
 
@@ -28,9 +28,9 @@
 | システム音声あり / マイクあり | ✅ **ユーザー確認済**（2026-09-14・無音問題をデバイス ID 解決方式で修正） | GateACheck で自動検証可 |
 | Pause / Resume | ✅ 実機確認済 | 60 秒テストで Pause 2001ms を正しく論理時間から除外（契約 §5.2 準拠） |
 | 10 分録画 | ✅ **自動 PASS**（2026-09-14: 600.4s 実測 → 論理 595.7s・mp4 594.8s・差 0.9s） | `GateACheck --full` で再現可 |
-| 複数アプリ切替 | ⬜ 手動テスト待ち | GateACheck シナリオ 3 の録画を再生して確認 |
-| MP4 seek | ⬜ 手動テスト待ち | 生成物をプレーヤーでシークして確認（faststart は WARN・下記知見 7 参照） |
-| 明確な音ズレなし | ⬜ 手動テスト待ち | 同上 |
+| 複数アプリ切替 | ✅ **ユーザー確認済** | GateACheck シナリオ 3 で確認 |
+| MP4 seek | ✅ **ユーザー確認済** | faststart は WARN だが seek 動作に問題なし（知見 7） |
+| 明確な音ズレなし | ✅ **ユーザー確認済** | GateACheck の手動確認で回答 |
 | v6.6.0 vs v7.0.1 比較 | ✅ 実施済 | 下記 §3 知見 9・10。**MVP は v6.6.0 を推奨** |
 
 ## 2. A の成果物（実装済み）
@@ -84,9 +84,8 @@ new RecordingResult {
 
 1. **Master Clock の帰属**（B と）— `docs/integration-notes.md` §1
 2. **Screenshot サービスの帰属**（B・C と）— 同 §2
-3. Gate A 手動 Smoke Test の実施（10 分録画・アプリ切替・seek・音ズレ）
-4. v6.6.0 vs v7.0.1 実機比較（v7 はフリーズ/FPS 低下の Issue #374 あり）
-5. 複数モニター環境での個別ディスプレイ録画指定（コード内 TODO(Spike A)）
+3. 複数モニター環境での個別ディスプレイ録画指定（コード内 TODO(Spike A)・単一モニター環境では未検証）
+4. v7.0.1 への移行タイミング（音声パイプライン再設計時・知見 9・10）
 
 ## 6. 検証手順（再現する場合）
 
