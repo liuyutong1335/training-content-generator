@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Gate A 確認ツール（開発計画書 §14 の完了条件を自動判定する）
+       使い方:
+         dotnet run -p:Platform=x64            標準モード（シナリオ 1〜3 + 手動確認）
+         dotnet run -p:Platform=x64 （full モード引数で 10 分録画シナリオを追加） -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ScreenRecorderLib" Version="6.6.0" />
+    <ProjectReference Include="..\..\src\TrainingContent.Capture\TrainingContent.Capture.csproj" />
+  </ItemGroup>
+
+</Project>
