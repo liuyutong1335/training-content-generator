@@ -1,7 +1,7 @@
 ﻿<Window x:Class="TrainingContent.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Training Content Generator"
+        Title="研修コンテンツ作成ツール"
         Width="1100" Height="720"
         MinWidth="860" MinHeight="520"
         WindowStartupLocation="CenterScreen"
@@ -26,7 +26,7 @@
 
         <!-- ===== Header ===== -->
         <Border DockPanel.Dock="Top" Background="#FF2B3A55" Padding="16,12">
-            <TextBlock Text="Training Content Generator"
+            <TextBlock Text="研修コンテンツ作成ツール"
                        Foreground="White"
                        FontSize="18"
                        FontWeight="SemiBold" />
@@ -54,19 +54,19 @@
                            Margin="14,0,0,8" />
 
                 <Button x:Name="NavHomeButton"
-                        Content="Home"
+                        Content="ホーム"
                         Style="{StaticResource NavButtonStyle}"
                         Click="NavHome_Click" />
                 <Button x:Name="NavRecordingButton"
-                        Content="Recording"
+                        Content="録画"
                         Style="{StaticResource NavButtonStyle}"
                         Click="NavRecording_Click" />
                 <Button x:Name="NavReviewButton"
-                        Content="Review"
+                        Content="手順確認"
                         Style="{StaticResource NavButtonStyle}"
                         Click="NavReview_Click" />
                 <Button x:Name="NavContentsButton"
-                        Content="Contents"
+                        Content="コンテンツ管理"
                         Style="{StaticResource NavButtonStyle}"
                         Click="NavContents_Click" />
             </StackPanel>

@@ -9,7 +9,7 @@
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0"
-                   Text="Review"
+                   Text="手順確認"
                    FontSize="24"
                    FontWeight="SemiBold"
                    Foreground="#FF1F2933" />
@@ -17,16 +17,13 @@
         <Border Grid.Row="1" Height="1" Background="#FFE0E0E0" Margin="0,12,0,20" />
 
         <StackPanel Grid.Row="2">
-            <TextBlock Text="Review — 未実装"
+            <TextBlock Text="録画から生成された操作手順を確認・編集する画面です。"
                        FontSize="15"
                        FontWeight="SemiBold"
-                       Foreground="#FF333333" />
-            <TextBlock Text="録画から生成された手順（TrainingStep）を確認・編集する画面です。"
-                       Margin="0,10,0,0"
-                       Foreground="#FF555555"
+                       Foreground="#FF333333"
                        TextWrapping="Wrap" />
-            <TextBlock Text="D6 で実装します（手順生成は担当B/Cの成果物を利用）。"
-                       Margin="0,6,0,0"
+            <TextBlock Text="この機能は現在準備中です。"
+                       Margin="0,12,0,0"
                        Foreground="#FF888888"
                        TextWrapping="Wrap" />
         </StackPanel>

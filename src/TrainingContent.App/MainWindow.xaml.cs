@@ -149,7 +149,7 @@ public partial class MainWindow : Window
     private void ShowPage(Button navButton, UserControl view)
     {
         var pageName = navButton.Content?.ToString() ?? string.Empty;
-        ShowPage(navButton, view, $"{pageName} を表示中");
+        ShowPage(navButton, view, $"{pageName}を表示中");
     }
 
     /// <summary>Status 表示を明示指定して View を差し替える（録画中の強制遷移など）。</summary>

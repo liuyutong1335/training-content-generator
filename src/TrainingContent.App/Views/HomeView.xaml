@@ -9,7 +9,7 @@
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0"
-                   Text="Home"
+                   Text="ホーム"
                    FontSize="24"
                    FontWeight="SemiBold"
                    Foreground="#FF1F2933" />
@@ -20,7 +20,7 @@
 
             <!-- ===== Current Project なし ===== -->
             <StackPanel x:Name="NoProjectPanel">
-                <TextBlock Text="Training Content Generator"
+                <TextBlock Text="研修コンテンツ作成ツール"
                            FontSize="15"
                            FontWeight="SemiBold"
                            Foreground="#FF333333" />
@@ -79,11 +79,11 @@
 
                     <StackPanel Orientation="Horizontal" Margin="0,24,0,0">
                         <StackPanel Margin="0,0,48,0">
-                            <TextBlock Text="Steps" FontSize="11" Foreground="#FF888888" />
+                            <TextBlock Text="手順数" FontSize="11" Foreground="#FF888888" />
                             <TextBlock x:Name="StepCountText" Margin="0,3,0,0" Foreground="#FF333333" />
                         </StackPanel>
                         <StackPanel Margin="0,0,48,0">
-                            <TextBlock Text="Recording" FontSize="11" Foreground="#FF888888" />
+                            <TextBlock Text="録画" FontSize="11" Foreground="#FF888888" />
                             <TextBlock x:Name="RecordingText" Margin="0,3,0,0" Foreground="#FF333333" />
                         </StackPanel>
                         <StackPanel>

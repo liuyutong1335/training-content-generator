@@ -9,7 +9,7 @@
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0"
-                   Text="Recording"
+                   Text="録画"
                    FontSize="24"
                    FontWeight="SemiBold"
                    Foreground="#FF1F2933" />
@@ -29,7 +29,7 @@
                            Margin="0,14,0,0"
                            Foreground="#FF555555"
                            TextWrapping="Wrap" />
-                <TextBlock Text="プロジェクトの作成・オープンは Home または コンテンツ管理 から行えます。"
+                <TextBlock Text="プロジェクトの作成・オープンは「ホーム」または「コンテンツ管理」から行えます。"
                            Margin="0,10,0,0"
                            Foreground="#FF888888"
                            TextWrapping="Wrap" />
@@ -123,7 +123,7 @@
                                Foreground="#FFC00000"
                                TextWrapping="Wrap" />
 
-                    <TextBlock Text="録画ファイルは &lt;project&gt;\raw\recording.mp4 に保存されます。"
+                    <TextBlock Text="録画ファイルはプロジェクトフォルダー内の raw\recording.mp4 に保存されます。"
                                Margin="0,16,0,0"
                                FontSize="11"
                                Foreground="#FF999999"

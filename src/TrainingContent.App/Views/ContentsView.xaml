@@ -62,22 +62,22 @@
                     </Style>
                 </DataGrid.RowStyle>
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="Title"
+                    <DataGridTextColumn Header="タイトル"
                                         Binding="{Binding Title}"
                                         Width="*" MinWidth="160" />
-                    <DataGridTextColumn Header="Updated"
+                    <DataGridTextColumn Header="更新日時"
                                         Binding="{Binding UpdatedAtUtc.LocalDateTime, StringFormat={}{0:yyyy/MM/dd HH:mm}}"
                                         Width="160" />
-                    <DataGridTextColumn Header="Duration"
+                    <DataGridTextColumn Header="録画時間"
                                         Binding="{Binding DurationMs, Converter={StaticResource DurationConverter}}"
                                         Width="100" />
-                    <DataGridTextColumn Header="Steps"
+                    <DataGridTextColumn Header="手順数"
                                         Binding="{Binding StepCount}"
                                         Width="70" />
-                    <DataGridTextColumn Header="Manual"
+                    <DataGridTextColumn Header="マニュアル"
                                         Binding="{Binding HasManual, Converter={StaticResource ArtifactStatusConverter}}"
                                         Width="90" />
-                    <DataGridTextColumn Header="Video"
+                    <DataGridTextColumn Header="動画"
                                         Binding="{Binding HasVideo, Converter={StaticResource ArtifactStatusConverter}}"
                                         Width="90" />
                 </DataGrid.Columns>
@@ -126,7 +126,7 @@
                     IsEnabled="False"
                     Click="Open_Click" />
             <Button x:Name="RenameButton"
-                    Content="名前変更"
+                    Content="名前を変更"
                     Width="104" Height="30"
                     Margin="8,0,0,0"
                     IsEnabled="False"
