@@ -45,6 +45,8 @@ src/TrainingContent.Capture/
 spike/recording-spike/       CLI 実機検証ツール（引数: 出力先 [秒数] [nopause]）
 spike/recording-spike-gui/   WPF 検証 GUI（デバイス選択・開始/一時停止/再開/停止）
 spike/gate-a-check/          Gate A 自動判定ツール（MP4 解析・3 シナリオ + 手動確認プロンプト）
+spike/capture-started-check/ CaptureStarted イベント実機検証（Phase 2・自動判定）
+spike/integration-smoke/     A+B 統合スモークテスト（Phase 2・自動判定）
 ```
 
 ### B・C・D へのインターフェース（これが A→全体の受け渡し形）
@@ -87,9 +89,15 @@ new RecordingResult {
    - D は B README 推奨手順の `session.Start()` 契機を `StateChanged(Recording)` から `CaptureStarted` へ変更することで、Event 側 0ms と MP4 の 0 秒が一致する
    - `RebaseClockToNow()` による原点張り直しは原則不要になる（保険として残す）
    - Pause/Resume で `RecorderStatus.Recording` が再発火しても `_captureStarted` ガードにより 2 回目は発火しない
-   - 実機での発火タイミング確認は次回実機テスト（統合検証）で実施予定
+   - ✅ **実機検証済み（2026-09-15・`spike/capture-started-check/`）**: StateChanged(Recording) 215ms → CaptureStarted 1485ms（撮影開始まで 1.3 秒）・Pause/Resume 挟んで発火 1 回・論理 Duration は Pause 除外を確認。全 4 項目 PASS
 2. **統合メモ §1（Master Clock の帰属）**: B の MasterClock を正とする案を受け入れを記載 — `docs/integration-notes.md` §1
    - 残タスク: 例会で B・D の合意を取り、D が Record UI に同期手順を実装する
+3. ✅ **A+B 統合スモークテスト実機 PASS（2026-09-15・`spike/integration-smoke/`）**
+   - B README 推奨手順（`CaptureStarted` 契機で `session.Start()`）を実際に実行
+   - Engine 論理 5059ms vs Session 論理 4913ms（**差 146ms**・許容 ±500ms 内）
+   - `events.jsonl` は契約 §20 どおり（`recording.started` timestampMs=0 / `recording.stopped` seq 4）
+   - D が Record UI を実装する際は本ツールのコードをそのまま転用できる（手順は B README どおりで追加調整なし）
+4. **PR 作成（2026-09-15）**: `feature/capture` → `main` へ Phase 2 第一弾（`CaptureStarted` + 実機検証 2 本）を Pull Request した。マージまで本ブランチで統合検証ツールが使える。`sln` は変更していない（§3 どおり D の窓口）
 
 ## 6. 未決事項・相談
 
@@ -114,4 +122,10 @@ spike\recording-spike-gui\bin\x64\Debug\net8.0-windows\win-x64\RecordingSpikeGui
 # Gate A 確認（自動シナリオ + 手動確認プロンプト。10 分録画も含める場合）
 spike\gate-a-check\bin\x64\Debug\net8.0-windows\win-x64\GateACheck.exe
 spike\gate-a-check\bin\x64\Debug\net8.0-windows\win-x64\GateACheck.exe --full
+
+# CaptureStarted イベントの実機検証（約 10 秒・自動判定）
+spike\capture-started-check\bin\x64\Debug\net8.0-windows\win-x64\CaptureStartedCheck.exe
+
+# A+B 統合スモークテスト（Engine + OperationCaptureSession・約 12 秒・自動判定）
+spike\integration-smoke\bin\x64\Debug\net8.0-windows\win-x64\IntegrationSmoke.exe
 ```
