@@ -99,7 +99,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>録画中は終了させない。自動 Stop は D5-A では行わない。</summary>
+    /// <summary>録画中は終了させない（自動 Stop は行わない。ユーザーが録画を停止してから閉じる）。</summary>
     protected override void OnClosing(CancelEventArgs e)
     {
         if (_recordingCoordinator.IsSessionActive)

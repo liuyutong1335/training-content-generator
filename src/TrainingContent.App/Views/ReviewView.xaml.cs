@@ -2,7 +2,7 @@
 
 namespace TrainingContent.App.Views;
 
-/// <summary>Review 画面。D1 は Placeholder（手順編集ロジックなし）。</summary>
+/// <summary>手順確認画面。現在は表示のみで、手順の編集ロジックは持たない。</summary>
 public partial class ReviewView : UserControl
 {
     public ReviewView() => InitializeComponent();

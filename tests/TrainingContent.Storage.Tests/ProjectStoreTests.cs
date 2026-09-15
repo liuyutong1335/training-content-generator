@@ -632,6 +632,61 @@ public class ProjectStoreTests
     }
 
     // =====================================================================
+    // Save の失敗経路 — temp file を残さない（既存 project.json は無傷のまま）
+    // =====================================================================
+
+    [Fact]
+    public async Task T_D5_H01_SaveFailure_LeavesNoTempFileAndKeepsExistingJson()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var project = await store.CreateProjectAsync("temp cleanup");
+        var jsonPath = ProjectJsonPath(temp, project.Id);
+        var tempPath = Path.Combine(ProjectDir(temp, project.Id), ProjectStore.ProjectTempFileName);
+        var before = await File.ReadAllTextAsync(jsonPath);
+
+        // 置換（File.Move）だけを失敗させる: 既存 project.json を他ハンドルが握っている状態にする。
+        using (var hold = new FileStream(jsonPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            project.Objective = "v2";
+
+            await Assert.ThrowsAnyAsync<Exception>(() => store.SaveProjectAsync(project));
+        }
+
+        // temp file が残らない
+        Assert.False(File.Exists(tempPath), "project.json.tmp が残っている");
+
+        // 既存 project.json は削除も上書きもされていない
+        Assert.True(File.Exists(jsonPath));
+        Assert.Equal(before, await File.ReadAllTextAsync(jsonPath));
+    }
+
+    [Fact]
+    public async Task T_D5_H02_SaveFailure_RecoversOnNextSave()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var project = await store.CreateProjectAsync("temp cleanup recovery");
+        var jsonPath = ProjectJsonPath(temp, project.Id);
+        var tempPath = Path.Combine(ProjectDir(temp, project.Id), ProjectStore.ProjectTempFileName);
+
+        using (var hold = new FileStream(jsonPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            project.Objective = "v2";
+            await Assert.ThrowsAnyAsync<Exception>(() => store.SaveProjectAsync(project));
+        }
+
+        // 障害要因が消えれば、通常どおり保存できる（temp も残らない）
+        await store.SaveProjectAsync(project);
+
+        Assert.False(File.Exists(tempPath), "project.json.tmp が残っている");
+        var loaded = await store.LoadProjectAsync(project.Id);
+        Assert.Equal("v2", loaded!.Objective);
+    }
+
+    // =====================================================================
     // Default Projects Root — install directory / repository を使わない（§5）
     // =====================================================================
     [Fact]

@@ -44,6 +44,9 @@ public sealed class RecordingCoordinator
     /// <summary>Engine と EventCapture の論理時間差の許容値。超えたら Trace Warning を出す。</summary>
     private const double DurationToleranceMs = 500;
 
+    /// <summary>撮影開始前（準備中）または EventCapture 故障中に操作されたときの message。</summary>
+    private const string NotReadyMessage = "録画の準備が完了していません。";
+
     private readonly IRecordingEngine _engine;
     private readonly ProjectStore _projectStore;
     private readonly CurrentProjectContext _currentProject;
@@ -55,9 +58,12 @@ public sealed class RecordingCoordinator
     // IRecordingEngine は State を公開していない（具象 Engine のみ）。境界は interface に保つため、
     // StateChanged から受け取った状態をここで保持する。Engine を動かすのは本 Coordinator だけなので
     // この mirror が唯一の状態源になる。
-    private RecordingState _state = RecordingState.Idle;
+    // Engine callback thread が書き UI thread が読むため volatile にする。
+    private volatile RecordingState _state = RecordingState.Idle;
 
     // ---- EventCapture integration ----
+    // 1 recording session につき 1 instance。所有権の受け渡しは TakeOperationSession() に集約し、
+    // 参照の公開は Volatile.Write、取り出しは Interlocked.Exchange で行う。
     private OperationCaptureSession? _operationSession;
 
     /// <summary><c>session.Start()</c> が成功したか。Engine callback thread から更新される。</summary>
@@ -155,7 +161,8 @@ public sealed class RecordingCoordinator
     {
         // field を何度も読まず local snapshot で判定する。Start() の実行中に
         // Engine Failed の cleanup が同じ session を破棄する可能性があるため。
-        var session = _operationSession;
+        // ここは所有権を取らない（Pause / Stop が同じ session を使う）ので Read のみ。
+        var session = Volatile.Read(ref _operationSession);
 
         if (session is null || _captureReady || _eventCaptureFaulted)
         {
@@ -168,7 +175,7 @@ public sealed class RecordingCoordinator
 
             // Start() の間に ownership が cleanup 側へ移っていたら ready に戻さない
             // （Engine Failed は recovery 不可なので成功 session として残さない）。
-            if (!ReferenceEquals(_operationSession, session) || _state == RecordingState.Failed)
+            if (!ReferenceEquals(Volatile.Read(ref _operationSession), session) || _state == RecordingState.Failed)
             {
                 Trace.TraceWarning(
                     "RecordingCoordinator: CaptureStarted の処理中に session の所有権が失われたため ready にしません。");
@@ -234,8 +241,11 @@ public sealed class RecordingCoordinator
             _eventCaptureFaulted = false;
             _eventCaptureFaultMessage = null;
 
-            // Session は StartAsync より先に用意する（CaptureStarted は StartAsync の後に届く）。
-            _operationSession = new OperationCaptureSession(_projectStore.GetProjectDirectory(project.Id));
+            // Session は StartAsync より先に用意して publish する（CaptureStarted は StartAsync の後に届く）。
+            // Volatile.Write で公開し、callback thread からの可視性を明確にする。
+            Volatile.Write(
+                ref _operationSession,
+                new OperationCaptureSession(_projectStore.GetProjectDirectory(project.Id)));
 
             await _engine.StartAsync(options).ConfigureAwait(true);
             return RecordingCommandResult.Success();
@@ -244,6 +254,9 @@ public sealed class RecordingCoordinator
         {
             Trace.TraceError("RecordingCoordinator: 録画開始に失敗しました — {0}", ex);
 
+            // 未 Start の session は hook / thread を持たないが、Dispose 責任はここで回収する
+            // （ResetSessionState は session resource を黙って捨てない）。
+            DisposeSessionQuietly(TakeOperationSession(), "start failed");
             ResetSessionState();
             return RecordingCommandResult.Failure("録画を開始できませんでした。");
         }
@@ -266,7 +279,7 @@ public sealed class RecordingCoordinator
     {
         if (!_captureReady || _eventCaptureFaulted)
         {
-            return RecordingCommandResult.Failure("録画の準備が完了していません。");
+            return RecordingCommandResult.Failure(NotReadyMessage);
         }
 
         _isCommandRunning = true;
@@ -305,7 +318,7 @@ public sealed class RecordingCoordinator
     {
         if (!_captureReady || _eventCaptureFaulted)
         {
-            return RecordingCommandResult.Failure("録画の準備が完了していません。");
+            return RecordingCommandResult.Failure(NotReadyMessage);
         }
 
         _isCommandRunning = true;
@@ -480,7 +493,8 @@ public sealed class RecordingCoordinator
     /// </summary>
     private long? StopEventCapture()
     {
-        var session = _operationSession;
+        // この経路が session の Dispose 責任を取得する（他経路と二重取得しない）。
+        var session = TakeOperationSession();
         if (session is null)
         {
             // integrated recording では EventCapture session の不在 = 正常な recording ではない。
@@ -512,17 +526,36 @@ public sealed class RecordingCoordinator
             MarkEventCaptureFaulted();
         }
 
+        DisposeSessionQuietly(session, "stop");
+        return eventDurationMs;
+    }
+
+    /// <summary>
+    /// session の所有権を原子的に取り出す（Dispose 責任を取得する）。
+    /// 同一 instance を複数経路が Dispose owner として取得しないための唯一の取り出し口。
+    /// </summary>
+    private OperationCaptureSession? TakeOperationSession() =>
+        Interlocked.Exchange(ref _operationSession, null);
+
+    /// <summary>後始末の例外で呼出元の処理を壊さない（cleanup は best-effort）。</summary>
+    private static void DisposeSessionQuietly(OperationCaptureSession? session, string reason)
+    {
+        if (session is null)
+        {
+            return;
+        }
+
         try
         {
             session.Dispose();
         }
         catch (Exception ex)
         {
-            Trace.TraceWarning("RecordingCoordinator: 操作記録の後始末に失敗しました — {0}", ex);
+            Trace.TraceWarning(
+                "RecordingCoordinator: 操作記録の後始末に失敗しました（{0}） — {1}",
+                reason,
+                ex);
         }
-
-        _operationSession = null;
-        return eventDurationMs;
     }
 
     /// <summary>
@@ -539,7 +572,8 @@ public sealed class RecordingCoordinator
     /// </summary>
     private void CleanupOperationSessionBestEffort(string reason)
     {
-        var session = _operationSession;
+        // Dispose 責任をこの経路が取得する（atomic なので他経路と二重取得しない）。
+        var session = TakeOperationSession();
 
         // metadata は同期で完全に落とす（UI / 後続 command から見て session が残らないように）。
         ResetSessionState();
@@ -549,20 +583,7 @@ public sealed class RecordingCoordinator
             return;
         }
 
-        Task.Run(() =>
-        {
-            try
-            {
-                session.Dispose();
-            }
-            catch (Exception ex)
-            {
-                Trace.TraceWarning(
-                    "RecordingCoordinator: 操作記録の後始末に失敗しました（{0}） — {1}",
-                    reason,
-                    ex);
-            }
-        });
+        Task.Run(() => DisposeSessionQuietly(session, reason));
     }
 
     private void MarkEventCaptureFaulted()
@@ -571,6 +592,15 @@ public sealed class RecordingCoordinator
         _eventCaptureFaultMessage ??= EventCaptureFaultedUserMessage;
     }
 
+    /// <summary>
+    /// session の metadata をクリアする（冪等・多重呼出前提）。
+    ///
+    /// <para>
+    /// <see cref="OperationCaptureSession"/> の resource はここでは触らない。
+    /// 所有権は <see cref="TakeOperationSession"/> で取得した側（Start 失敗 / Stop / Engine Failed の
+    /// 各経路）が Dispose する。resource を黙って捨てないことが、この分離の目的。
+    /// </para>
+    /// </summary>
     private void ResetSessionState()
     {
         _sessionProjectId = null;
@@ -578,7 +608,6 @@ public sealed class RecordingCoordinator
         _captureReady = false;
         _eventCaptureFaulted = false;
         _eventCaptureFaultMessage = null;
-        _operationSession = null;
     }
 
     // ---------------------------------------------------------------------

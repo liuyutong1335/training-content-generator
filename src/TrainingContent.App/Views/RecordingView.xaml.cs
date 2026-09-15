@@ -8,16 +8,17 @@ using TrainingContent.Capture;
 namespace TrainingContent.App.Views;
 
 /// <summary>
-/// Recording。担当A の <see cref="IRecordingEngine"/>（<see cref="RecordingCoordinator"/> 経由）で
-/// 画面録画を操作し、停止後に RecordingInfo を project.json へ保存する。
+/// 録画画面。device の選択と Start / Pause / Resume / Stop の操作 UI を提供する。
 ///
 /// <para>
-/// D5-A の範囲: Current Project → device 選択 → Start/Pause/Resume/Stop → raw/recording.mp4 →
-/// RecordingInfo → project.json → Current Project 更新 → Home へ反映。
-/// 担当B の EventCapture（canonical timeline 同期）は D5-B まで接続しない。
+/// 録画そのもの（Engine と EventCapture の編成、Canonical Timeline の同期、停止後の
+/// RecordingInfo 保存）は <see cref="RecordingCoordinator"/> の責任で、この View は
+/// その状態を表示して操作を委譲するだけ。録画結果は coordinator が project.json へ保存し、
+/// Current Project の更新を通じて Home の表示にも反映される。
 /// </para>
 /// <para>
-/// この View は ScreenRecorderLib を知らない。Engine の境界は <see cref="IRecordingEngine"/> のみ。
+/// この View は ScreenRecorderLib も EventCapture も知らない。境界は
+/// <see cref="IRecordingEngine"/> と <see cref="RecordingCoordinator"/> のみ。
 /// </para>
 /// </summary>
 public partial class RecordingView : UserControl
@@ -38,6 +39,9 @@ public partial class RecordingView : UserControl
 
     private const string AllDesktopsLabel = "全デスクトップ";
     private const string NoAudioLabel = "録音しない";
+
+    /// <summary>coordinator が fault message を設定しなかった場合の defensive fallback。</summary>
+    private const string EventCaptureFailedFallback = "操作記録の取得に失敗しました。";
 
     private readonly RecordingCoordinator _coordinator;
     private readonly CurrentProjectContext _currentProject;
@@ -129,7 +133,7 @@ public partial class RecordingView : UserControl
         else if (faulted)
         {
             // EventCapture の失敗はユーザーが確認できる必要がある（録画はまだ Stop できる）。
-            ShowMessage(_coordinator.EventCaptureFaultMessage ?? "操作記録の取得に失敗しました。");
+            ShowMessage(_coordinator.EventCaptureFaultMessage ?? EventCaptureFailedFallback);
         }
 
         var idle = state == RecordingState.Idle && !busy;
@@ -343,7 +347,7 @@ public partial class RecordingView : UserControl
 
             case RecordingStopStatus.EventCaptureFailed:
                 // 操作記録が壊れた recording は保存しない（MP4 等の artifact は残す）。
-                ShowMessage(outcome.ErrorMessage ?? "操作記録の取得に失敗しました。");
+                ShowMessage(outcome.ErrorMessage ?? EventCaptureFailedFallback);
                 SetStatus("録画は保存されませんでした。");
                 break;
 

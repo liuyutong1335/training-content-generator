@@ -12,8 +12,8 @@ namespace TrainingContent.App.Views;
 /// Home。Current Project の概要（Project Overview）を表示する。
 ///
 /// <para>
-/// D4 では Project を作る / 開く / 現在の Project を知る、までが範囲。
-/// Recording(D5) と Review(D6) の起動導線はここに置かない。
+/// 責任は Project の新規作成と Current Project の概要表示まで。録画・手順確認・
+/// コンテンツ管理への起動導線はここに置かない（Navigation は MainWindow の責任）。
 /// </para>
 /// </summary>
 public partial class HomeView : UserControl

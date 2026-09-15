@@ -120,7 +120,7 @@ public sealed class ProjectStore
                 Directory.CreateDirectory(Path.Combine(directory, sub));
             }
 
-            // events.jsonl は空の UTF-8 file のみ。Event append は B 担当領域（D2 では writer を作らない）。
+            // events.jsonl は空の UTF-8 file のみを用意する。Event の append は EventCapture（担当B）の領域。
             await File.WriteAllBytesAsync(Path.Combine(directory, EventsFileName), [], cancellationToken)
                 .ConfigureAwait(false);
 
@@ -168,18 +168,24 @@ public sealed class ProjectStore
         var targetPath = Path.Combine(directory, ProjectFileName);
         var tempPath = Path.Combine(directory, ProjectTempFileName);
 
-        var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
         try
         {
-            await stream.WriteAsync(json, cancellationToken).ConfigureAwait(false);
-            stream.Flush(flushToDisk: true);
-        }
-        finally
-        {
-            await stream.DisposeAsync().ConfigureAwait(false);
-        }
+            await using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await stream.WriteAsync(json, cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
 
-        File.Move(tempPath, targetPath, overwrite: true);
+            // 置換が成功すれば temp は残らない。
+            File.Move(tempPath, targetPath, overwrite: true);
+        }
+        catch
+        {
+            // 失敗時は temp を best-effort で片付ける。既存 project.json には触れない。
+            // cleanup の失敗で元の例外を上書きしない（TryDeleteFile は例外を投げない）。
+            TryDeleteFile(tempPath);
+            throw;
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -432,6 +438,25 @@ public sealed class ProjectStore
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Trace.TraceWarning("ProjectStore: rollback に失敗しました — {0}: {1}", directory, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// temp file などの後始末。失敗しても例外を投げない（呼出元の元の例外を上書きしないため）。
+    /// 対象は常に Project directory 配下の固定名で、外部由来の path は受け取らない。
+    /// </summary>
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Trace.TraceWarning("ProjectStore: temp file の削除に失敗しました — {0}: {1}", path, ex.Message);
         }
     }
 }

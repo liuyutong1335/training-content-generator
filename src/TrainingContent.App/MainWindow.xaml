@@ -10,7 +10,7 @@
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Display">
     <Window.Resources>
-        <!-- ナビゲーション項目の見た目。D1 は標準 Button テンプレートのまま使う。 -->
+        <!-- ナビゲーション項目の見た目。標準 Button テンプレートのまま使う。 -->
         <Style x:Key="NavButtonStyle" TargetType="Button">
             <Setter Property="HorizontalContentAlignment" Value="Left" />
             <Setter Property="Padding" Value="14,10" />
