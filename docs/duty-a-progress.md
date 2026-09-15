@@ -97,6 +97,7 @@ new RecordingResult {
    - Engine 論理 5059ms vs Session 論理 4913ms（**差 146ms**・許容 ±500ms 内）
    - `events.jsonl` は契約 §20 どおり（`recording.started` timestampMs=0 / `recording.stopped` seq 4）
    - D が Record UI を実装する際は本ツールのコードをそのまま転用できる（手順は B README どおりで追加調整なし）
+4. **PR 作成（2026-09-15）**: `feature/capture` → `main` へ Phase 2 第一弾（`CaptureStarted` + 実機検証 2 本）を Pull Request した。マージまで本ブランチで統合検証ツールが使える。`sln` は変更していない（§3 どおり D の窓口）
 
 ## 6. 未決事項・相談
 
