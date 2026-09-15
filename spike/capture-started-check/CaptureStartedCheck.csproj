@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- CaptureStarted イベントの実機検証ツール（duty-a-progress §5 の実機確認項目）
+       使い方: dotnet run （プロジェクトとして spike/capture-started-check を指定）
+       検証する項目（自動判定・約 10 秒で完了）:
+         1. StateChanged(Recording) は StartAsync 直後に発火する
+         2. CaptureStarted は撮影開始瞬間（約 2 秒後・WGC 初期化）に発火する
+         3. CaptureStarted は Pause/Resume を挟んでも 1 回しか発火しない
+         4. 論理 Duration は Pause を除外した値になる（契約 §5.2） -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TrainingContent.Capture\TrainingContent.Capture.csproj" />
+  </ItemGroup>
+
+</Project>
