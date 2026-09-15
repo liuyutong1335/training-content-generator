@@ -28,6 +28,14 @@ public interface IRecordingEngine
 
     /// <summary>録画状態の変化・失敗を通知する（UI はこのイベントのみ購読する）。</summary>
     event EventHandler<RecordingStateChangedEventArgs>? StateChanged;
+
+    /// <summary>
+    /// 実際の撮影（WGC 初期化完了・エンコーダー動作開始）が始まった瞬間に 1 回だけ発火する
+    /// （統合メモ §1: Canonical Timeline の 0ms 基準点）。B の EventCapture Session や
+    /// MasterClock は <c>StateChanged(Recording)</c> ではなく本イベントで開始すること
+    /// （StartAsync 呼び出しから撮影開始まで ~2 秒かかるため）。
+    /// </summary>
+    event EventHandler? CaptureStarted;
 }
 
 public enum RecordingState

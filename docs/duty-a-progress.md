@@ -10,14 +10,14 @@
 
 ## 1. 現在の進捗（2026-09-14 時点）
 
-> 更新: **Gate A 完了** — 自動検証（10 分録画含む）+ 手動確認すべて PASS。次は Phase 2（B の EventCapture との統合）。
+> 更新: **Gate A 完了** — 自動検証（10 分録画含む）+ 手動確認すべて PASS。**Phase 2（B の EventCapture との統合）着手**。最初の対応として B から要望のあった `CaptureStarted` イベントを実装（§7）。
 
 | Phase | 項目 | 状態 |
 |---|---|---|
 | Phase 0 | Contract Freeze（全員） | ✅ 完了（契約 v1.0 FROZEN・`docs/phase0-contract.md`） |
 | Phase 1 | Spike A: Recording | ✅ **GATE A PASS**（自動検証 + 手動確認完了） |
 | Phase 1 | Spike A: v6.6.0 vs v7.0.1 実機比較 | ✅ 実施済（§3 知見 9・10 参照。**MVP は v6.6.0 推奨**） |
-| Phase 2 | Integrated Recording | ⬜（B の EventCapture との統合） |
+| Phase 2 | Integrated Recording | 🔶 進行中（B の EventCapture と統合。§5 参照） |
 
 ### Gate A チェックリスト（開発計画書 §14）
 
@@ -80,14 +80,25 @@ new RecordingResult {
 - `dotnet test` **16/16 合格**（Core 契約テスト 13 + Capture 状態機械テスト 3）
 - 実機テスト: 10 秒 / 60 秒録画成功（60 秒版は Pause 2001ms を含み、論理 58400ms を正しく返した）
 
-## 5. 未決事項・相談
+## 5. Phase 2 統合作業（2026-09-15 開始）
+
+1. **`IRecordingEngine.CaptureStarted` イベントを追加**（B README「A との時間同期」への対応）
+   - 実際の撮影開始瞬間（`OnStatusChanged` で `RecorderStatus.Recording` を初回検出し内部クロックを `Restart()` した同一点）に 1 回だけ発火
+   - D は B README 推奨手順の `session.Start()` 契機を `StateChanged(Recording)` から `CaptureStarted` へ変更することで、Event 側 0ms と MP4 の 0 秒が一致する
+   - `RebaseClockToNow()` による原点張り直しは原則不要になる（保険として残す）
+   - Pause/Resume で `RecorderStatus.Recording` が再発火しても `_captureStarted` ガードにより 2 回目は発火しない
+   - 実機での発火タイミング確認は次回実機テスト（統合検証）で実施予定
+2. **統合メモ §1（Master Clock の帰属）**: B の MasterClock を正とする案を受け入れを記載 — `docs/integration-notes.md` §1
+   - 残タスク: 例会で B・D の合意を取り、D が Record UI に同期手順を実装する
+
+## 6. 未決事項・相談
 
 1. **Master Clock の帰属**（B と）— `docs/integration-notes.md` §1
 2. **Screenshot サービスの帰属**（B・C と）— 同 §2
 3. 複数モニター環境での個別ディスプレイ録画指定（コード内 TODO(Spike A)・単一モニター環境では未検証）
 4. v7.0.1 への移行タイミング（音声パイプライン再設計時・知見 9・10）
 
-## 6. 検証手順（再現する場合）
+## 7. 検証手順（再現する場合）
 
 ```powershell
 # ビルド & テスト（.NET 8 SDK 必須）
