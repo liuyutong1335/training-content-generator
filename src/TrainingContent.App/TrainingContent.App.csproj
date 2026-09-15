@@ -14,12 +14,15 @@
     <AssemblyName>TrainingContent.App</AssemblyName>
   </PropertyGroup>
 
-  <!-- 依存方向: App → Storage / Capture → Core。Storage / Capture が UI を参照してはいけない。
-       Capture は ScreenRecorderLib を直接参照するが、App はそれを知らない（境界は IRecordingEngine）。 -->
+  <!-- 依存方向: App → Storage / Capture / EventCapture → Core。
+       Storage / Capture / EventCapture が UI を参照してはいけない。
+       Capture は ScreenRecorderLib を直接参照するが、App はそれを知らない（境界は IRecordingEngine）。
+       EventCapture の利用も OperationCaptureSession 経由に限る。 -->
   <ItemGroup>
     <ProjectReference Include="..\TrainingContent.Core\TrainingContent.Core.csproj" />
     <ProjectReference Include="..\TrainingContent.Storage\TrainingContent.Storage.csproj" />
     <ProjectReference Include="..\TrainingContent.Capture\TrainingContent.Capture.csproj" />
+    <ProjectReference Include="..\TrainingContent.EventCapture\TrainingContent.EventCapture.csproj" />
   </ItemGroup>
 
 </Project>

@@ -574,6 +574,64 @@ public class ProjectStoreTests
     }
 
     // =====================================================================
+    // D5-B Project directory — OperationCaptureSession へ渡す runtime path
+    // =====================================================================
+
+    [Fact]
+    public async Task T_D5B_S01_GetProjectDirectory_IsAbsoluteGuidDirectory()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var project = await store.CreateProjectAsync("プロジェクトディレクトリ");
+
+        var dir = store.GetProjectDirectory(project.Id);
+
+        Assert.True(Path.IsPathRooted(dir), "runtime path は絶対 path");
+        Assert.Equal(ProjectDir(temp, project.Id), dir);
+        Assert.Equal(project.Id.ToString("D"), Path.GetFileName(dir));
+        Assert.True(Directory.Exists(dir));
+    }
+
+    [Fact]
+    public async Task T_D5B_S02_GetProjectDirectory_HasContractSubDirectories()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var project = await store.CreateProjectAsync("サブディレクトリ");
+
+        var dir = store.GetProjectDirectory(project.Id);
+
+        // OperationCaptureSession は events.jsonl と screenshots/original/ をここへ書く。
+        Assert.True(File.Exists(Path.Combine(dir, ProjectStore.EventsFileName)));
+        Assert.True(Directory.Exists(Path.Combine(dir, "screenshots", "original")));
+        Assert.Equal(
+            store.GetRecordingOutputPath(project.Id),
+            Path.Combine(dir, "raw", "recording.mp4"));
+    }
+
+    [Fact]
+    public void T_D5B_S03_GetProjectDirectory_NeverEscapesProjectsRoot()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var rootPrefix = temp.Root.EndsWith(Path.DirectorySeparatorChar)
+            ? temp.Root
+            : temp.Root + Path.DirectorySeparatorChar;
+
+        foreach (var id in new[] { Guid.NewGuid(), Guid.Empty, Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff") })
+        {
+            var dir = store.GetProjectDirectory(id);
+
+            Assert.StartsWith(rootPrefix, dir, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(id.ToString("D"), dir, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("..", dir);
+        }
+    }
+
+    // =====================================================================
     // Default Projects Root — install directory / repository を使わない（§5）
     // =====================================================================
     [Fact]

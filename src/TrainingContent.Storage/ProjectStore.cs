@@ -341,6 +341,17 @@ public sealed class ProjectStore
         Path.Combine(ProjectDirectory(id), RecordingDirectoryName, RecordingFileName);
 
     /// <summary>
+    /// Project directory の絶対パス（Contract §17 の directory 構造を持つもの）。
+    ///
+    /// <para>
+    /// 担当B の OperationCaptureSession のように、runtime で Project 配下へ書き込む相手へ
+    /// 渡すためだけに使う。project.json へ保存してはいけない（Contract §18）。
+    /// ProjectsRoot 配下であることの保証は <see cref="ProjectDirectory"/> の検査をそのまま使う。
+    /// </para>
+    /// </summary>
+    public string GetProjectDirectory(Guid id) => ProjectDirectory(id);
+
+    /// <summary>
     /// Project 相対パス（Contract §18）を Project directory 配下に解決し、実ファイルの有無を返す。
     /// 脱出を試みる path は false。
     /// </summary>

@@ -2,32 +2,33 @@
 using TrainingContent.App.State;
 using TrainingContent.Capture;
 using TrainingContent.Core.Models;
+using TrainingContent.EventCapture;
 using TrainingContent.Storage;
 
 namespace TrainingContent.App.Services;
 
 /// <summary>
-/// 担当A の <see cref="IRecordingEngine"/> を App へ接続する薄い Integration Layer。
+/// 担当A の <see cref="IRecordingEngine"/> と担当B の <see cref="OperationCaptureSession"/> を
+/// App へ接続する Integration Layer。1 recording session の orchestration owner。
 ///
 /// <para>
-/// 責任: Engine の呼出、Recording session state、Project ID の固定、RecordingOptions の構築、
-/// RecordingResult → RecordingInfo の mapping、ProjectStore への保存、CurrentProjectContext の更新。
+/// 責任: Engine / EventCapture の呼出順序、Recording session state、Project ID の固定、
+/// RecordingOptions の構築、RecordingResult → RecordingInfo の mapping、ProjectStore への保存、
+/// CurrentProjectContext の更新。
 /// </para>
 /// <para>
-/// 意図的にやらないこと: ScreenRecorderLib の直接操作、canonical timeline の補正、
-/// EventCapture（担当B）の呼出、Step 生成、AI。D5-A では B とは接続しない。
+/// Canonical Timeline の 0ms は <see cref="IRecordingEngine.CaptureStarted"/>（実際の撮影開始瞬間）で
+/// 揃える。StartAsync の戻りや StateChanged(Recording) では揃わない（WGC 初期化に ~2 秒かかる）。
+/// 固定 ms の補正や <c>RebaseClockToNow()</c> は使わない。
 /// </para>
 /// <para>
-/// 録画 session 中は Project が切り替わっても保存先がぶれないよう、開始時の Project ID と
-/// 選択 device を session として固定する（<see cref="SessionProjectId"/>）。
+/// 意図的にやらないこと: ScreenRecorderLib の直接操作、timeline の数値補正、Step 生成、AI、
+/// EventCapture の再実装。EventCapture が壊れた recording は integrated recording として
+/// project.json に確定しない（recovery は D8）。
 /// </para>
 /// </summary>
 public sealed class RecordingCoordinator
 {
-    private readonly IRecordingEngine _engine;
-    private readonly ProjectStore _projectStore;
-    private readonly CurrentProjectContext _currentProject;
-
     /// <summary>
     /// 録画停止後に project.json の保存へ失敗したときの message。
     /// Project directory が失われている場合など MP4 の存在を断定できない状況があるため、
@@ -35,6 +36,17 @@ public sealed class RecordingCoordinator
     /// </summary>
     private const string SaveFailedMessage =
         "録画停止後、プロジェクト情報の保存に失敗しました。録画ファイルの状態を確認してください。";
+
+    /// <summary>EventCapture 側の失敗をユーザーへ伝える message。</summary>
+    private const string EventCaptureFaultedUserMessage =
+        "操作記録の取得に失敗しました。録画を停止して再試行してください。";
+
+    /// <summary>Engine と EventCapture の論理時間差の許容値。超えたら Trace Warning を出す。</summary>
+    private const double DurationToleranceMs = 500;
+
+    private readonly IRecordingEngine _engine;
+    private readonly ProjectStore _projectStore;
+    private readonly CurrentProjectContext _currentProject;
 
     private Guid? _sessionProjectId;
     private RecordingOptions? _sessionOptions;
@@ -44,6 +56,17 @@ public sealed class RecordingCoordinator
     // StateChanged から受け取った状態をここで保持する。Engine を動かすのは本 Coordinator だけなので
     // この mirror が唯一の状態源になる。
     private RecordingState _state = RecordingState.Idle;
+
+    // ---- EventCapture integration ----
+    private OperationCaptureSession? _operationSession;
+
+    /// <summary><c>session.Start()</c> が成功したか。Engine callback thread から更新される。</summary>
+    private volatile bool _captureReady;
+
+    /// <summary>EventCapture 側で回復不能な失敗が起きたか。</summary>
+    private volatile bool _eventCaptureFaulted;
+
+    private string? _eventCaptureFaultMessage;
 
     public RecordingCoordinator(
         IRecordingEngine engine,
@@ -58,16 +81,13 @@ public sealed class RecordingCoordinator
         _projectStore = projectStore;
         _currentProject = currentProject;
 
-        // Engine の StateChanged は UI thread から来る保証がない。ここでは中継するだけにして、
+        // Engine の StateChanged / CaptureStarted は UI thread から来る保証がない。ここでは中継するだけにして、
         // Dispatcher への marshal は UI 側（RecordingView / MainWindow）の責任にする。
-        _engine.StateChanged += (_, e) =>
-        {
-            _state = e.State;
-            ActivityChanged?.Invoke(this, EventArgs.Empty);
-        };
+        _engine.StateChanged += OnEngineStateChanged;
+        _engine.CaptureStarted += OnCaptureStarted;
     }
 
-    /// <summary>Engine の状態変化、command の開始/終了を UI へ通知する。</summary>
+    /// <summary>Engine / EventCapture の状態変化、command の開始/終了を UI へ通知する。</summary>
     public event EventHandler? ActivityChanged;
 
     /// <summary>Engine の現在状態（StateChanged から保持した mirror）。</summary>
@@ -75,6 +95,18 @@ public sealed class RecordingCoordinator
 
     /// <summary>Start/Pause/Resume/Stop のいずれかが実行中か（UI の二重操作防止）。</summary>
     public bool IsCommandRunning => _isCommandRunning;
+
+    /// <summary>
+    /// 実際の撮影が始まり EventCapture も開始できたか。false かつ Engine が Recording の間は
+    /// UI 上「録画準備中」として扱う（Pause させると A/B の timeline が壊れるため）。
+    /// </summary>
+    public bool IsCaptureReady => _captureReady;
+
+    /// <summary>EventCapture 側の失敗が起きているか。</summary>
+    public bool HasEventCaptureFault => _eventCaptureFaulted;
+
+    /// <summary>EventCapture 失敗時のユーザー向け message。</summary>
+    public string? EventCaptureFaultMessage => _eventCaptureFaultMessage;
 
     /// <summary>
     /// 録画 session が進行中か。Navigation lock（§26）と Window close 拒否（§27）の判定に使う。
@@ -96,16 +128,75 @@ public sealed class RecordingCoordinator
     public IReadOnlyList<AudioDevice> GetSystemAudioDevices() => _engine.GetSystemAudioDevices();
 
     // ---------------------------------------------------------------------
-    // Start / Pause / Resume
+    // Engine events
+    // ---------------------------------------------------------------------
+
+    private void OnEngineStateChanged(object? sender, RecordingStateChangedEventArgs e)
+    {
+        _state = e.State;
+
+        if (e.State == RecordingState.Failed)
+        {
+            // Engine が失敗したら EventCapture の hook / thread を残さず、session metadata も
+            // 成功 session として残さない。Engine の recovery semantics は新設しない
+            // （既存方針: アプリ再起動を促す）。
+            CleanupOperationSessionBestEffort("engine failed");
+        }
+
+        ActivityChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 「実際の撮影開始」の通知。ここで初めて EventCapture を開始し、Canonical 0ms を
+    /// MP4 の 0 秒に一致させる（契約 §5.1）。Engine の callback thread から呼ばれるため
+    /// UI element には触らない。
+    /// </summary>
+    private void OnCaptureStarted(object? sender, EventArgs e)
+    {
+        // field を何度も読まず local snapshot で判定する。Start() の実行中に
+        // Engine Failed の cleanup が同じ session を破棄する可能性があるため。
+        var session = _operationSession;
+
+        if (session is null || _captureReady || _eventCaptureFaulted)
+        {
+            return;
+        }
+
+        try
+        {
+            session.Start();
+
+            // Start() の間に ownership が cleanup 側へ移っていたら ready に戻さない
+            // （Engine Failed は recovery 不可なので成功 session として残さない）。
+            if (!ReferenceEquals(_operationSession, session) || _state == RecordingState.Failed)
+            {
+                Trace.TraceWarning(
+                    "RecordingCoordinator: CaptureStarted の処理中に session の所有権が失われたため ready にしません。");
+                return;
+            }
+
+            _captureReady = true; // 正常終了した後にのみ true
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceError("RecordingCoordinator: 操作記録の開始に失敗しました — {0}", ex);
+            MarkEventCaptureFaulted();
+        }
+
+        ActivityChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // ---------------------------------------------------------------------
+    // Start
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// 録画を開始する。出力先は ProjectStore が解決し、選択 device は Engine の返した
-    /// instance をそのまま渡す（FriendlyName からの再構築はしない）。
+    /// 録画を開始する。出力先と Project directory は ProjectStore が解決し、選択 device は
+    /// Engine の返した instance をそのまま渡す（FriendlyName からの再構築はしない）。
     ///
     /// <para>
-    /// 注意: Engine の StartAsync は「実際の撮影開始」より前に戻る（WGC 初期化に ~2 秒）。
-    /// ここでは UI state を Recording にするだけで、timeline の基準には使わない。
+    /// <see cref="OperationCaptureSession.Start"/> はここでは呼ばない。StartAsync は実際の撮影開始
+    /// より前に戻るため、<see cref="IRecordingEngine.CaptureStarted"/> を待って開始する。
     /// </para>
     /// </summary>
     public async Task<RecordingCommandResult> StartAsync(
@@ -139,6 +230,12 @@ public sealed class RecordingCoordinator
 
             _sessionProjectId = project.Id;
             _sessionOptions = options;
+            _captureReady = false;
+            _eventCaptureFaulted = false;
+            _eventCaptureFaultMessage = null;
+
+            // Session は StartAsync より先に用意する（CaptureStarted は StartAsync の後に届く）。
+            _operationSession = new OperationCaptureSession(_projectStore.GetProjectDirectory(project.Id));
 
             await _engine.StartAsync(options).ConfigureAwait(true);
             return RecordingCommandResult.Success();
@@ -147,8 +244,7 @@ public sealed class RecordingCoordinator
         {
             Trace.TraceError("RecordingCoordinator: 録画開始に失敗しました — {0}", ex);
 
-            _sessionProjectId = null;
-            _sessionOptions = null;
+            ResetSessionState();
             return RecordingCommandResult.Failure("録画を開始できませんでした。");
         }
         finally
@@ -158,15 +254,39 @@ public sealed class RecordingCoordinator
         }
     }
 
+    // ---------------------------------------------------------------------
+    // Pause / Resume
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// 一時停止。順序は実機 PASS 済みの integration-smoke に合わせて Engine → EventCapture。
+    /// 撮影開始前（準備中）と EventCapture 故障中は許可しない。
+    /// </summary>
     public async Task<RecordingCommandResult> PauseAsync()
     {
+        if (!_captureReady || _eventCaptureFaulted)
+        {
+            return RecordingCommandResult.Failure("録画の準備が完了していません。");
+        }
+
         _isCommandRunning = true;
         ActivityChanged?.Invoke(this, EventArgs.Empty);
 
         try
         {
             await _engine.PauseAsync().ConfigureAwait(true);
-            return RecordingCommandResult.Success();
+
+            try
+            {
+                _operationSession?.Pause();
+                return RecordingCommandResult.Success();
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceError("RecordingCoordinator: 操作記録の一時停止に失敗しました — {0}", ex);
+                MarkEventCaptureFaulted();
+                return RecordingCommandResult.Failure(EventCaptureFaultedUserMessage);
+            }
         }
         catch (Exception ex)
         {
@@ -180,15 +300,32 @@ public sealed class RecordingCoordinator
         }
     }
 
+    /// <summary>再開。順序は Engine → EventCapture（integration-smoke と同じ）。</summary>
     public async Task<RecordingCommandResult> ResumeAsync()
     {
+        if (!_captureReady || _eventCaptureFaulted)
+        {
+            return RecordingCommandResult.Failure("録画の準備が完了していません。");
+        }
+
         _isCommandRunning = true;
         ActivityChanged?.Invoke(this, EventArgs.Empty);
 
         try
         {
             await _engine.ResumeAsync().ConfigureAwait(true);
-            return RecordingCommandResult.Success();
+
+            try
+            {
+                _operationSession?.Resume();
+                return RecordingCommandResult.Success();
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceError("RecordingCoordinator: 操作記録の再開に失敗しました — {0}", ex);
+                MarkEventCaptureFaulted();
+                return RecordingCommandResult.Failure(EventCaptureFaultedUserMessage);
+            }
         }
         catch (Exception ex)
         {
@@ -207,7 +344,8 @@ public sealed class RecordingCoordinator
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// 録画を停止し、成功したら Current Project の Recording を更新して保存する。
+    /// 録画を停止する。順序は integration-smoke と同じ:
+    /// Engine 停止（MP4 確定）→ EventCapture 停止 → Dispose → 論理時間の比較 → project.json 保存。
     ///
     /// <para>
     /// 保存は session 固定の Project ID で project.json を読み直してから行う
@@ -215,8 +353,8 @@ public sealed class RecordingCoordinator
     /// Revision / UpdatedAtUtc を進めるのはこの 1 箇所だけ。
     /// </para>
     /// <para>
-    /// MP4 の確定に成功しても project.json の保存に失敗する可能性がある。その場合も
-    /// MP4 は削除せず、Current Project を「保存できたように」更新しない。
+    /// EventCapture が失敗した recording は integrated recording として確定しない
+    /// （RecordingInfo を保存せず、Revision も進めない）。MP4 / events.jsonl / screenshot は削除しない。
     /// </para>
     /// </summary>
     public async Task<RecordingStopOutcome> StopAsync()
@@ -240,13 +378,50 @@ public sealed class RecordingCoordinator
             {
                 // Engine 側の失敗（Failed state / 予期しない例外）。独自 recovery は行わない。
                 Trace.TraceError("RecordingCoordinator: 録画停止に失敗しました — {0}", ex);
+                CleanupOperationSessionBestEffort("engine stop failed");
+
                 return RecordingStopOutcome.Failure(
                     RecordingStopStatus.EngineFailed,
                     "録画エンジンでエラーが発生しました。アプリを再起動して再試行してください。");
             }
 
+            var eventDurationMs = StopEventCapture();
+
+            // Engine と EventCapture の論理時間を比較する（統合の成立確認）。
+            // 差が大きくても recording は捨てない（契約違反として即破棄はしない）。
+            if (eventDurationMs is { } eventMs)
+            {
+                var engineMs = result.Duration.TotalMilliseconds;
+                var differenceMs = Math.Abs(engineMs - eventMs);
+
+                if (differenceMs > DurationToleranceMs)
+                {
+                    Trace.TraceWarning(
+                        "RecordingCoordinator: Engine と EventCapture の論理時間差が {0:F0} ms です（Engine={1:F0} ms / Event={2} ms）。",
+                        differenceMs,
+                        engineMs,
+                        eventMs);
+                }
+                else
+                {
+                    Trace.TraceInformation(
+                        "RecordingCoordinator: Engine と EventCapture の論理時間差は {0:F0} ms です。",
+                        differenceMs);
+                }
+            }
+
             var projectId = _sessionProjectId;
             var options = _sessionOptions;
+
+            if (_eventCaptureFaulted)
+            {
+                // 操作記録が壊れている recording は integrated recording として保存しない。
+                return RecordingStopOutcome.Failure(
+                    RecordingStopStatus.EventCaptureFailed,
+                    _eventCaptureFaultMessage ?? EventCaptureFaultedUserMessage,
+                    result.FilePath);
+            }
+
             if (projectId is null || options is null)
             {
                 Trace.TraceError("RecordingCoordinator: session 情報が失われているため保存できません。");
@@ -275,6 +450,11 @@ public sealed class RecordingCoordinator
                 await _projectStore.SaveProjectAsync(project).ConfigureAwait(true);
                 _currentProject.SetCurrent(project);
 
+                Trace.TraceInformation(
+                    "RecordingCoordinator: integrated recording を保存しました（Engine {0:F0} ms / Event {1} ms）。",
+                    result.Duration.TotalMilliseconds,
+                    eventDurationMs?.ToString() ?? "n/a");
+
                 return RecordingStopOutcome.Success(result.FilePath);
             }
             catch (Exception ex)
@@ -288,11 +468,117 @@ public sealed class RecordingCoordinator
         }
         finally
         {
-            _sessionProjectId = null;
-            _sessionOptions = null;
+            ResetSessionState();
             _isCommandRunning = false;
             ActivityChanged?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    /// <summary>
+    /// EventCapture を停止して論理 Duration を返す。Dispose まで行い hook / thread を残さない。
+    /// 失敗しても例外は投げず fault として記録する。
+    /// </summary>
+    private long? StopEventCapture()
+    {
+        var session = _operationSession;
+        if (session is null)
+        {
+            // integrated recording では EventCapture session の不在 = 正常な recording ではない。
+            // 内部不整合で session が消えていても成功扱いで保存しないよう fault として記録する。
+            Trace.TraceError(
+                "RecordingCoordinator: EventCapture session が存在しないため integrated recording として扱いません。");
+            MarkEventCaptureFaulted();
+            return null;
+        }
+
+        long? eventDurationMs = null;
+
+        if (_captureReady)
+        {
+            try
+            {
+                eventDurationMs = session.Stop();
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceError("RecordingCoordinator: 操作記録の停止に失敗しました — {0}", ex);
+                MarkEventCaptureFaulted();
+            }
+        }
+        else if (!_eventCaptureFaulted)
+        {
+            // CaptureStarted が来ないまま停止された = 操作記録が 1 件も取れていない。
+            Trace.TraceWarning("RecordingCoordinator: 操作記録が開始されないまま録画が停止されました。");
+            MarkEventCaptureFaulted();
+        }
+
+        try
+        {
+            session.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning("RecordingCoordinator: 操作記録の後始末に失敗しました — {0}", ex);
+        }
+
+        _operationSession = null;
+        return eventDurationMs;
+    }
+
+    /// <summary>
+    /// Engine が Failed になった / 停止に失敗したときに、active session の metadata を破棄し、
+    /// EventCapture の hook と thread を残さない。
+    ///
+    /// <para>
+    /// Engine Failed は recovery 不可（既存方針: アプリ再起動を促す）なので、session metadata も
+    /// 「成功 session」として残さない。metadata は同期的にすべて落とし、
+    /// <see cref="OperationCaptureSession.Dispose"/>（内部で最大 20 秒待つ Stop）だけを
+    /// Engine の callback thread を塞がないよう別 thread で実行する。
+    /// 後始末の例外で App を落とさない。
+    /// </para>
+    /// </summary>
+    private void CleanupOperationSessionBestEffort(string reason)
+    {
+        var session = _operationSession;
+
+        // metadata は同期で完全に落とす（UI / 後続 command から見て session が残らないように）。
+        ResetSessionState();
+
+        if (session is null)
+        {
+            return;
+        }
+
+        Task.Run(() =>
+        {
+            try
+            {
+                session.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceWarning(
+                    "RecordingCoordinator: 操作記録の後始末に失敗しました（{0}） — {1}",
+                    reason,
+                    ex);
+            }
+        });
+    }
+
+    private void MarkEventCaptureFaulted()
+    {
+        _eventCaptureFaulted = true;
+        _eventCaptureFaultMessage ??= EventCaptureFaultedUserMessage;
+    }
+
+    private void ResetSessionState()
+    {
+        _sessionProjectId = null;
+        _sessionOptions = null;
+        _captureReady = false;
+        _eventCaptureFaulted = false;
+        _eventCaptureFaultMessage = null;
+        _operationSession = null;
     }
 
     // ---------------------------------------------------------------------
@@ -350,6 +636,12 @@ public enum RecordingStopStatus
 
     /// <summary>Engine 側で失敗（Failed state / 例外）。</summary>
     EngineFailed,
+
+    /// <summary>
+    /// EventCapture 側が失敗したため integrated recording として保存しなかった。
+    /// MP4 / events.jsonl / screenshot は残す（recovery は D8）。
+    /// </summary>
+    EventCaptureFailed,
 
     /// <summary>そもそも録画中ではなかった。</summary>
     NotRecording,

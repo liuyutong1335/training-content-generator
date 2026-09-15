@@ -105,30 +105,47 @@ public partial class RecordingView : UserControl
     {
         var state = _coordinator.State;
         var busy = _coordinator.IsCommandRunning;
+        var ready = _coordinator.IsCaptureReady;
+        var faulted = _coordinator.HasEventCaptureFault;
 
+        // Engine の Recording は実際の撮影開始より前に立つ。EventCapture が開始できた
+        // （CaptureStarted → session.Start 完了）までは「録画準備中」として区別する。
         StateText.Text = state switch
         {
             RecordingState.Idle => "待機中",
-            RecordingState.Recording => "録画中",
+            RecordingState.Recording => ready ? "録画中" : "録画準備中",
             RecordingState.Paused => "一時停止中",
             RecordingState.Stopping => "停止処理中",
             RecordingState.Failed => "エラー",
             _ => "不明",
         };
 
-        if (state == RecordingState.Failed && string.IsNullOrEmpty(MessageText.Text))
+        if (state == RecordingState.Failed)
         {
-            // Failed からの復帰手段は D5-A では用意しない（Engine の recovery semantics が未定義）。
+            // Engine Failed は recovery 不可（既存方針: App 再起動）なので EventCapture fault より優先する。
+            // 直前の fault message が残っていても上書きする。
             ShowMessage("録画エンジンでエラーが発生しました。アプリを再起動して再試行してください。");
+        }
+        else if (faulted)
+        {
+            // EventCapture の失敗はユーザーが確認できる必要がある（録画はまだ Stop できる）。
+            ShowMessage(_coordinator.EventCaptureFaultMessage ?? "操作記録の取得に失敗しました。");
         }
 
         var idle = state == RecordingState.Idle && !busy;
 
         // device を列挙できていない間は開始させない（録画対象の選択が成立しないため）。
         StartButton.IsEnabled = idle && !_devicesFailed;
-        PauseButton.IsEnabled = state == RecordingState.Recording && !busy;
-        ResumeButton.IsEnabled = state == RecordingState.Paused && !busy;
-        StopButton.IsEnabled = state is RecordingState.Recording or RecordingState.Paused && !busy;
+
+        // 準備中に Pause すると A/B の Canonical Timeline が壊れるため、撮影開始後だけ許可する。
+        var canOperate = ready && !faulted && !busy;
+        PauseButton.IsEnabled = state == RecordingState.Recording && canOperate;
+        ResumeButton.IsEnabled = state == RecordingState.Paused && canOperate;
+
+        // EventCapture が失敗して Engine だけ Recording / Paused に残った場合も、
+        // ユーザーが終了できるよう Stop は残す。
+        StopButton.IsEnabled =
+            state is RecordingState.Recording or RecordingState.Paused && !busy && (ready || faulted);
 
         // 録画中は device を変更させない（選択と実際の録音対象が食い違わないように）。
         var devicesEnabled = idle && !_devicesFailed;
@@ -322,6 +339,12 @@ public partial class RecordingView : UserControl
             case RecordingStopStatus.EngineFailed:
                 ShowMessage(outcome.ErrorMessage ?? "録画エンジンでエラーが発生しました。");
                 SetStatus("録画の停止に失敗しました。");
+                break;
+
+            case RecordingStopStatus.EventCaptureFailed:
+                // 操作記録が壊れた recording は保存しない（MP4 等の artifact は残す）。
+                ShowMessage(outcome.ErrorMessage ?? "操作記録の取得に失敗しました。");
+                SetStatus("録画は保存されませんでした。");
                 break;
 
             default:
