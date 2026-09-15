@@ -27,10 +27,23 @@ public sealed class ProjectStore
 
     public const string EventsFileName = "events.jsonl";
 
+    /// <summary>録画ファイルを置く Project directory 直下の folder 名（Contract §17）。</summary>
+    private const string RecordingDirectoryName = "raw";
+
+    /// <summary>録画ファイル名（Contract §17）。</summary>
+    private const string RecordingFileName = "recording.mp4";
+
+    /// <summary>
+    /// Contract §17/§18 の canonical な録画 media path。
+    /// project.json の <c>RecordingInfo.MediaPath</c> には必ずこの値を保存する
+    /// （絶対パスは保存禁止・区切りは <c>/</c> に統一）。
+    /// </summary>
+    public const string RecordingMediaPath = RecordingDirectoryName + "/" + RecordingFileName;
+
     /// <summary>Contract §17 の固定 directory 構造（Project directory 直下に作成する分）。</summary>
     private static readonly string[] SubDirectories =
     [
-        "raw",
+        RecordingDirectoryName,
         Path.Combine("screenshots", "original"),
         Path.Combine("screenshots", "edited"),
         "manual",
@@ -313,6 +326,19 @@ public sealed class ProjectStore
     }
 
     private string ProjectFilePath(Guid id) => Path.Combine(ProjectDirectory(id), ProjectFileName);
+
+    /// <summary>
+    /// 録画 Engine へ渡す出力先の絶対パス（Contract §17: <c>raw/recording.mp4</c>）。
+    ///
+    /// <para>
+    /// 録画 Engine（担当A）は実ファイルを書くため Windows の絶対パスを要求するが、
+    /// project.json へ保存するのは <see cref="RecordingMediaPath"/> の方である。
+    /// ここで独自に path を組み立てず、ProjectsRoot 配下の保証は
+    /// <see cref="ProjectDirectory"/> に委譲する。
+    /// </para>
+    /// </summary>
+    public string GetRecordingOutputPath(Guid id) =>
+        Path.Combine(ProjectDirectory(id), RecordingDirectoryName, RecordingFileName);
 
     /// <summary>
     /// Project 相対パス（Contract §18）を Project directory 配下に解決し、実ファイルの有無を返す。

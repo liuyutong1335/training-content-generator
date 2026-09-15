@@ -1,17 +1,20 @@
 ﻿using System.Windows;
 using TrainingContent.App.Services;
 using TrainingContent.App.State;
+using TrainingContent.Capture;
 using TrainingContent.Storage;
 
 namespace TrainingContent.App;
 
 /// <summary>
-/// Composition Root。ProjectStore / CurrentProjectContext / ProjectWorkspace を
-/// ここで 1 instance ずつ生成し、MainWindow 経由で必要な View へ渡す。
+/// Composition Root。ProjectStore / CurrentProjectContext / ProjectWorkspace / IRecordingEngine /
+/// RecordingCoordinator をここで 1 instance ずつ生成し、MainWindow 経由で必要な View へ渡す。
 /// View 側で new したり、Projects Root のパスを再定義したりしない。
 /// </summary>
 public partial class App : Application
 {
+    private ScreenRecorderRecordingEngine? _recordingEngine;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -24,8 +27,21 @@ public partial class App : Application
 
         var workspace = new ProjectWorkspace(projectStore, currentProject);
 
-        var window = new MainWindow(projectStore, currentProject, workspace);
+        // 録画 Engine は App lifetime で 1 instance だけ生成する（IDisposable の所有はこの Root）。
+        // App から ScreenRecorderLib を参照しない。境界は IRecordingEngine のみ。
+        _recordingEngine = new ScreenRecorderRecordingEngine();
+        var recordingCoordinator = new RecordingCoordinator(_recordingEngine, projectStore, currentProject);
+
+        var window = new MainWindow(projectStore, currentProject, workspace, recordingCoordinator);
         MainWindow = window;
         window.Show();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _recordingEngine?.Dispose();
+        _recordingEngine = null;
+
+        base.OnExit(e);
     }
 }

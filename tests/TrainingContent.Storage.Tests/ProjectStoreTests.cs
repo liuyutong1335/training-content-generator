@@ -526,6 +526,54 @@ public class ProjectStoreTests
     }
 
     // =====================================================================
+    // D5-A Recording path — Contract §17 raw/recording.mp4（§18 で絶対パス保存禁止）
+    // =====================================================================
+
+    [Fact]
+    public void T_D5A_S01_RecordingMediaPath_IsCanonicalRelativePath()
+    {
+        Assert.Equal("raw/recording.mp4", ProjectStore.RecordingMediaPath);
+        Assert.DoesNotContain('\\', ProjectStore.RecordingMediaPath);
+        Assert.False(Path.IsPathRooted(ProjectStore.RecordingMediaPath));
+    }
+
+    [Fact]
+    public async Task T_D5A_S02_GetRecordingOutputPath_IsUnderProjectRawDirectory()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var project = await store.CreateProjectAsync("録画パス");
+
+        var path = store.GetRecordingOutputPath(project.Id);
+
+        Assert.True(Path.IsPathRooted(path), "engine へ渡す path は絶対 path");
+        Assert.Equal(Path.Combine(ProjectDir(temp, project.Id), "raw", "recording.mp4"), path);
+        Assert.Equal("recording.mp4", Path.GetFileName(path));
+        Assert.Equal("raw", Path.GetFileName(Path.GetDirectoryName(path)));
+    }
+
+    [Fact]
+    public void T_D5A_S03_GetRecordingOutputPath_NeverEscapesProjectsRoot()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        // Guid 由来なので任意の id でも ProjectsRoot 配下に閉じる（Create 前でも同じ）
+        foreach (var id in new[] { Guid.NewGuid(), Guid.Empty, Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff") })
+        {
+            var path = store.GetRecordingOutputPath(id);
+
+            var rootPrefix = temp.Root.EndsWith(Path.DirectorySeparatorChar)
+                ? temp.Root
+                : temp.Root + Path.DirectorySeparatorChar;
+
+            Assert.StartsWith(rootPrefix, path, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(id.ToString("D"), path, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    // =====================================================================
     // Default Projects Root — install directory / repository を使わない（§5）
     // =====================================================================
     [Fact]
