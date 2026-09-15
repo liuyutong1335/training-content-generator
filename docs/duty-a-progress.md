@@ -45,6 +45,7 @@ src/TrainingContent.Capture/
 spike/recording-spike/       CLI 実機検証ツール（引数: 出力先 [秒数] [nopause]）
 spike/recording-spike-gui/   WPF 検証 GUI（デバイス選択・開始/一時停止/再開/停止）
 spike/gate-a-check/          Gate A 自動判定ツール（MP4 解析・3 シナリオ + 手動確認プロンプト）
+spike/capture-started-check/ CaptureStarted イベント実機検証（Phase 2・自動判定）
 ```
 
 ### B・C・D へのインターフェース（これが A→全体の受け渡し形）
@@ -87,7 +88,7 @@ new RecordingResult {
    - D は B README 推奨手順の `session.Start()` 契機を `StateChanged(Recording)` から `CaptureStarted` へ変更することで、Event 側 0ms と MP4 の 0 秒が一致する
    - `RebaseClockToNow()` による原点張り直しは原則不要になる（保険として残す）
    - Pause/Resume で `RecorderStatus.Recording` が再発火しても `_captureStarted` ガードにより 2 回目は発火しない
-   - 実機での発火タイミング確認は次回実機テスト（統合検証）で実施予定
+   - ✅ **実機検証済み（2026-09-15・`spike/capture-started-check/`）**: StateChanged(Recording) 215ms → CaptureStarted 1485ms（撮影開始まで 1.3 秒）・Pause/Resume 挟んで発火 1 回・論理 Duration は Pause 除外を確認。全 4 項目 PASS
 2. **統合メモ §1（Master Clock の帰属）**: B の MasterClock を正とする案を受け入れを記載 — `docs/integration-notes.md` §1
    - 残タスク: 例会で B・D の合意を取り、D が Record UI に同期手順を実装する
 
@@ -114,4 +115,7 @@ spike\recording-spike-gui\bin\x64\Debug\net8.0-windows\win-x64\RecordingSpikeGui
 # Gate A 確認（自動シナリオ + 手動確認プロンプト。10 分録画も含める場合）
 spike\gate-a-check\bin\x64\Debug\net8.0-windows\win-x64\GateACheck.exe
 spike\gate-a-check\bin\x64\Debug\net8.0-windows\win-x64\GateACheck.exe --full
+
+# CaptureStarted イベントの実機検証（約 10 秒・自動判定）
+spike\capture-started-check\bin\x64\Debug\net8.0-windows\win-x64\CaptureStartedCheck.exe
 ```
