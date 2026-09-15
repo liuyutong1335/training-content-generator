@@ -21,6 +21,8 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
 
     public event EventHandler<RecordingStateChangedEventArgs>? StateChanged;
 
+    public event EventHandler? CaptureStarted;
+
     public RecordingState State
     {
         get => _state;
@@ -215,6 +217,9 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         {
             _captureStarted = true;
             _clock.Restart();
+            // 統合メモ §1: B の EventCapture Session はこの瞬間に開始して
+            // Canonical 0ms == MP4 の 0 秒に合わせる（README「A との時間同期」）
+            CaptureStarted?.Invoke(this, EventArgs.Empty);
             return;
         }
     }

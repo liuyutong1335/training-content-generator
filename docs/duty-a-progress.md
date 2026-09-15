@@ -3,19 +3,21 @@
 - 担当: Liu Yutong
 - 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）
 - 作業ブランチ: `feature/capture`
-- **2026-09-14: Spike A の録画・音声（Mic + System Audio）をユーザーが実機確認済み。Gate A 確認ツール（`spike/gate-a-check`）を同ブランチの PR で提供。**
+- **2026-09-14: ✅ GATE A 確定 — Spike A 完了。** 自動検証（10 分録画含む）全 PASS + 手動確認（音ズレ / seek / 各音声 / アプリ切替）もユーザーが確認済み。
 - 本書の読み方: 同僚および同僚の AI は、A の実装状況を確認する際に本書を読む。契約事項は `docs/phase0-contract.md`（FROZEN）が優先。本書は進捗・知見・未決事項の記録。
 
 ---
 
 ## 1. 現在の進捗（2026-09-14 時点）
 
+> 更新: **Gate A 完了** — 自動検証（10 分録画含む）+ 手動確認すべて PASS。**Phase 2（B の EventCapture との統合）着手**。最初の対応として B から要望のあった `CaptureStarted` イベントを実装（§7）。
+
 | Phase | 項目 | 状態 |
 |---|---|---|
 | Phase 0 | Contract Freeze（全員） | ✅ 完了（契約 v1.0 FROZEN・`docs/phase0-contract.md`） |
-| Phase 1 | Spike A: Recording | 🔶 自動検証項目は合格・手動 Smoke Test 残存 |
-| Phase 1 | Spike A: v6.6.0 vs v7.0.1 実機比較 | ⬜ 未実施（6.6.0 で骨格確定済み） |
-| Phase 2 | Integrated Recording | ⬜（B の EventCapture との統合） |
+| Phase 1 | Spike A: Recording | ✅ **GATE A PASS**（自動検証 + 手動確認完了） |
+| Phase 1 | Spike A: v6.6.0 vs v7.0.1 実機比較 | ✅ 実施済（§3 知見 9・10 参照。**MVP は v6.6.0 推奨**） |
+| Phase 2 | Integrated Recording | 🔶 進行中（B の EventCapture と統合。§5 参照） |
 
 ### Gate A チェックリスト（開発計画書 §14）
 
@@ -25,11 +27,11 @@
 | 録画開始 / 停止 | ✅ 実機確認済 | 10 秒・60 秒テストで MP4 生成成功 |
 | システム音声あり / マイクあり | ✅ **ユーザー確認済**（2026-09-14・無音問題をデバイス ID 解決方式で修正） | GateACheck で自動検証可 |
 | Pause / Resume | ✅ 実機確認済 | 60 秒テストで Pause 2001ms を正しく論理時間から除外（契約 §5.2 準拠） |
-| 10 分録画 | ⬜ 手動テスト待ち | `spike/gate-a-check` を `--full` モードで実施 |
-| 複数アプリ切替 | ⬜ 手動テスト待ち | GateACheck シナリオ 3 の録画を再生して確認 |
-| MP4 seek | ⬜ 手動テスト待ち | 生成物をプレーヤーでシークして確認（faststart は WARN・下記知見 7 参照） |
-| 明確な音ズレなし | ⬜ 手動テスト待ち | 同上 |
-| v6.6.0 vs v7.0.1 比較 | ⬜ 未実施 | csproj の PackageReference バージョンを差し替えて同一テストを実施 |
+| 10 分録画 | ✅ **自動 PASS**（2026-09-14: 600.4s 実測 → 論理 595.7s・mp4 594.8s・差 0.9s） | `GateACheck --full` で再現可 |
+| 複数アプリ切替 | ✅ **ユーザー確認済** | GateACheck シナリオ 3 で確認 |
+| MP4 seek | ✅ **ユーザー確認済** | faststart は WARN だが seek 動作に問題なし（知見 7） |
+| 明確な音ズレなし | ✅ **ユーザー確認済** | GateACheck の手動確認で回答 |
+| v6.6.0 vs v7.0.1 比較 | ✅ 実施済 | 下記 §3 知見 9・10。**MVP は v6.6.0 を推奨** |
 
 ## 2. A の成果物（実装済み）
 
@@ -69,22 +71,34 @@ new RecordingResult {
 5. マイクとシステム音声は**同一音声トラックにミックス**されて MP4 に収まる（§4 参照）
 6. v0.1 期の Python Spike（`spike/python-recording/`）からの知見: pyaudiowpatch の blocking read は生 bytes / DPI 125% 環境で `GetSystemMetrics` が仮想化値を返す / モノラルマイクはチャンネル数を収めないと失敗
 7. **IsMp4FastStartEnabled が v6.6.0 で効かない**（HW/SW エンコーダ両方で moov が末尾）。seek 自体は問題なく可能なため WARN 扱い。**v7.0.1 比較時の確認ポイント**
-8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.7s 以内を確認済み
+8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.9s 以内を確認済み
+9. **v7.0.1 は音声系が Breaking Change**: `GetSystemAudioDevices(source)` 廃止（`GetSystemAudioCaptureDevices` / `GetSystemAudioLoopbackDevices` に分離）、`AudioInputDevice`/`AudioOutputDevice` 廃止 → `AudioSources` リスト（`CaptureAudioSource` / `LoopbackAudioSource` / `ProcessAudioSource`）に一本化。`OnAudioPacketRecorded` イベント追加（将来の音ズレ検証・STT に有用）。`IRecordingEngine` 抽象は影響なし（実装差し替えで吸収可能）
+10. **v7.0.1 実録比較の結論**: 初回測定で「mp4 が論理時間より 3.2s 短い異常」に見えたが、**比較スクリプト側の測定ミス**（Pause 減算漏れ）で、修正後は v6.6.0 と同等（差 0.7s 以内）だった。faststart は v7 でも効かず（両バージョン共通の制約）。v7 は音声系 API の Breaking Change のみが実質的な移行コスト。→ **MVP は v6.6.0（実績あり・契約整合済み）を推奨、v7 への移行は低リスト**。検証ツール: `spike/v7-comparison/`
 
 ## 4. テスト状況
 
 - `dotnet test` **16/16 合格**（Core 契約テスト 13 + Capture 状態機械テスト 3）
 - 実機テスト: 10 秒 / 60 秒録画成功（60 秒版は Pause 2001ms を含み、論理 58400ms を正しく返した）
 
-## 5. 未決事項・相談
+## 5. Phase 2 統合作業（2026-09-15 開始）
+
+1. **`IRecordingEngine.CaptureStarted` イベントを追加**（B README「A との時間同期」への対応）
+   - 実際の撮影開始瞬間（`OnStatusChanged` で `RecorderStatus.Recording` を初回検出し内部クロックを `Restart()` した同一点）に 1 回だけ発火
+   - D は B README 推奨手順の `session.Start()` 契機を `StateChanged(Recording)` から `CaptureStarted` へ変更することで、Event 側 0ms と MP4 の 0 秒が一致する
+   - `RebaseClockToNow()` による原点張り直しは原則不要になる（保険として残す）
+   - Pause/Resume で `RecorderStatus.Recording` が再発火しても `_captureStarted` ガードにより 2 回目は発火しない
+   - 実機での発火タイミング確認は次回実機テスト（統合検証）で実施予定
+2. **統合メモ §1（Master Clock の帰属）**: B の MasterClock を正とする案を受け入れを記載 — `docs/integration-notes.md` §1
+   - 残タスク: 例会で B・D の合意を取り、D が Record UI に同期手順を実装する
+
+## 6. 未決事項・相談
 
 1. **Master Clock の帰属**（B と）— `docs/integration-notes.md` §1
 2. **Screenshot サービスの帰属**（B・C と）— 同 §2
-3. Gate A 手動 Smoke Test の実施（10 分録画・アプリ切替・seek・音ズレ）
-4. v6.6.0 vs v7.0.1 実機比較（v7 はフリーズ/FPS 低下の Issue #374 あり）
-5. 複数モニター環境での個別ディスプレイ録画指定（コード内 TODO(Spike A)）
+3. 複数モニター環境での個別ディスプレイ録画指定（コード内 TODO(Spike A)・単一モニター環境では未検証）
+4. v7.0.1 への移行タイミング（音声パイプライン再設計時・知見 9・10）
 
-## 6. 検証手順（再現する場合）
+## 7. 検証手順（再現する場合）
 
 ```powershell
 # ビルド & テスト（.NET 8 SDK 必須）
