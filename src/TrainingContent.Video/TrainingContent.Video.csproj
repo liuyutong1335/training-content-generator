@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- R-05: TrainingProject + 録画 MP4 → output/training_video.mp4（契約 §16/§17/§28）。
+       合成方式: FFmpeg + ASS 字幕焼き込み（spike/video-compose-check で実証済み）。
+       依存は TrainingContent.Core のみ（ffmpeg は外部プロセス呼び出し）。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TrainingContent.Core\TrainingContent.Core.csproj" />
+  </ItemGroup>
+
+</Project>

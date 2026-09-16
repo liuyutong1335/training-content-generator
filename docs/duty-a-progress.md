@@ -1,7 +1,7 @@
-# 担当 A（Recording Engine）作業ログ・進捗
+﻿# 担当 A（Recording Engine）作業ログ・進捗
 
 - 担当: Liu Yutong
-- 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）
+- 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）+ `src/TrainingContent.Video/`（R-05・2026-09-16 にリーダー判断で A 担当に）
 - 作業ブランチ: `feature/capture`
 - **2026-09-14: ✅ GATE A 確定 — Spike A 完了。** 自動検証（10 分録画含む）全 PASS + 手動確認（音ズレ / seek / 各音声 / アプリ切替）もユーザーが確認済み。
 - 本書の読み方: 同僚および同僚の AI は、A の実装状況を確認する際に本書を読む。契約事項は `docs/phase0-contract.md`（FROZEN）が優先。本書は進捗・知見・未決事項の記録。
@@ -139,3 +139,24 @@ spike\capture-started-check\bin\x64\Debug\net8.0-windows\win-x64\CaptureStartedC
 # A+B 統合スモークテスト（Engine + OperationCaptureSession・約 12 秒・自動判定）
 spike\integration-smoke\bin\x64\Debug\net8.0-windows\win-x64\IntegrationSmoke.exe
 ```
+
+---
+
+## 8. R-05（動画生成）作業記録（2026-09-16・担当変更で A に）
+
+- **方式の決定**: FFmpeg + ASS 字幕焼き込み（`spike/video-compose-check/` で実証・全 4 項目 PASS）。
+  監査 Blocker #1 が求めていた「C# での合成方式の選定」はこれで確定。エンコーダは libopenh264（LGPL ビルドに libx264 は無い）。
+- **モジュール実装**（開発計画書 §12 の 4 領域のうち Timeline / Subtitle / Renderer を実装・Overlay は将来拡張）:
+  - `Timeline/StepTimelineBuilder.cs` — TrainingStep[] → 表示区間（契約 §14: EndMs=null は次 Step 開始まで・最終は +4s・Duration にクランプ）
+  - `Subtitle/AssSubtitleWriter.cs` — ASS 生成（pure logic・単体テスト 16 本）
+  - `Renderer/FfmpegVideoRenderer.cs` — 契約 §20 構成（Title Screen → 字幕焼き込み録画 → Ending）の ffmpeg 実行
+  - `IVideoComposer.cs` — D の ContentsView「再生成」用の窓口。出力は契約 §17 の output/training_video.mp4
+- **実装上の知見**:
+  - ASS の `Format:` 行は `Dialogue` の 10 フィールドと一致させること（5 フィールドで書くと余剰フィールドがテキストとして描画される。spike のフレーム目視で発見）
+  - ass フィルタの引数に絶対パスを渡せない（ドライブ文字 `:` がフィルタオプション区切りに解析される）→ 作業ディレクトリを指定して相対パスで渡す
+  - xunit の `Assert.DoesNotContain`（文字列）は**文化依存比較**で、ja 環境では全角 `｛` と半角 `{` が同値扱いされる → 波括弧エスケープの検証は ordinal 比較で行う
+  - concat は音声パラメータ不一致（録画側 AAC と anullsrc）で壊れ得るため再エンコードで繋ぐ
+- **テスト**: `dotnet test` 32/32 合格（Core 13 + Capture 3 + Video 16）。実機検証は `spike/video-compose-check/`（Title/Ending 込み 15 秒出力の ffprobe 実測 + フレーム画素差で字幕焼き込みを証明）
+- **未解決**: O-01（無操作区間の自動短縮）は Post-MVP。TTS は v0.5 以降。sln 登録済み（Video / Video.Tests）。実装分は **PR #10**（PR #9 は spike のみ先行マージ）。main 取込み済み（2026-09-16）
+  例会事項: README 構成図の owner 表記修正（Video を A に）・開発計画書 §24 への Video Generator 追記・§8 OSS 一覧への FFmpeg 追加と THIRD_PARTY_NOTICES.md への記載
+
