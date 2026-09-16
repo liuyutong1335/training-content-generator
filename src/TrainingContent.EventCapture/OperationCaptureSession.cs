@@ -190,6 +190,9 @@ public sealed class OperationCaptureSession : IDisposable
     ///   5. 最後に recording.stopped を書く（必ず最終行になる）
     /// どこかの書き込みが失敗しても（events.jsonl 掴まれ等）リソース解放は finally で
     /// 必ず実行する。後片付けを書き込み成否に依存させない（同指摘 §1）。
+    /// 書き込み系の例外は握り潰さず呼び出し元へ伝播させる: recording.stopped を書けなかった
+    /// recording は終端イベントを欠くため、integrated recording として確定させるべきではない
+    /// （Coordinator 側は Stop 失敗を fault として扱う）。
     /// </remarks>
     public long Stop()
     {
@@ -208,35 +211,21 @@ public sealed class OperationCaptureSession : IDisposable
                 _queue.CompleteAdding();
                 _worker?.Join(15000); // 終端イベントの取りこぼし防止（UIA・撮影は 1 Event 百ms 級）
 
-                try
-                {
-                    // textEntry バーストはワーカーが queue を処理し終わった後に締め切る。
-                    // drain 前に flush すると queue 残存イベントより古い textEntry が先に
-                    // 書かれ、ファイル行順の timestampMs 非減少が崩れるため。
-                    // （ワーカーの各処理パスは書き込み直前に flush 済みなので、ここで残るのは
-                    //   最後の Text キーで始まった未締め切りバーストのみ）
-                    FlushTextBuffer();
-                }
-                catch
-                {
-                    // 書き込み失敗でもリソース解放は続行する。
-                }
+                // textEntry バーストはワーカーが queue を処理し終わった後に締め切る。
+                // drain 前に flush すると queue 残存イベントより古い textEntry が先に
+                // 書かれ、ファイル行順の timestampMs 非減少が崩れるため。
+                // （ワーカーの各処理パスは書き込み直前に flush 済みなので、ここで残るのは
+                //   最後の Text キーで始まった未締め切りバーストのみ）
+                FlushTextBuffer();
 
-                try
-                {
-                    _writer?.Append("recording.stopped", durationMs, new { });
-                }
-                catch
-                {
-                    // 終端イベントの書き込みに失敗してもリソース解放は続行する
-                    // （events.jsonl が掴まれている場合など。フック / スレッドの残留を防ぐ方を優先）。
-                }
+                _writer?.Append("recording.stopped", durationMs, new { });
 
                 return durationMs;
             }
             finally
             {
-                TeardownHooks(); // 冪等。途中で例外が出てもフック解除を保証する
+                // 例外が出てもフック解除だけは保証する（書き込み失敗でフック / スレッドを残留させない）。
+                TeardownHooks();
             }
         }
     }

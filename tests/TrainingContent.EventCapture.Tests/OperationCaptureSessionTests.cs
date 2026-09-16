@@ -71,18 +71,22 @@ public class OperationCaptureSessionTests : IDisposable
         // 録画開始後に events.jsonl を排他ロックし、recording.stopped の書き込みを必ず失敗させる。
         using var lockFile = new FileStream(_eventsPath, FileMode.Open, FileAccess.Read, FileShare.None);
 
-        // 書き込み失敗を握り潰して終了すること（例外を投げない）。
-        var durationMs = session.Stop();
+        // 書き込み失敗は例外として呼び出し元へ伝播する
+        // （終端イベントを欠く recording を integrated として確定させないため。Coordinator が fault 扱いにする）。
+        Assert.ThrowsAny<Exception>(() => session.Stop());
 
-        Assert.True(durationMs >= 0);
+        // それでもリソース解放は実行されていること（try/finally）。
         Assert.False(session.IsHookThreadAliveForTest);
         Assert.False(session.IsWorkerAliveForTest);
 
         lockFile.Dispose(); // 自分のロックを解除してからファイル内容を確認する
 
-        // 終端イベントは書き込めていない（書き込み失敗はリソース解放を優先して握り潰す）。
+        // 終端イベントは書き込めていない。
         var lines = File.ReadAllLines(_eventsPath);
         Assert.DoesNotContain(lines, line => line.Contains("\"recording.stopped\""));
+
+        // 例外後の Dispose も安全に完了すること（ハングしない）。
+        session.Dispose();
     }
 
     [Fact]
