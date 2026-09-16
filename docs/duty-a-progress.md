@@ -76,6 +76,7 @@ new RecordingResult {
 8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.9s 以内を確認済み
 9. **v7.0.1 は音声系が Breaking Change**: `GetSystemAudioDevices(source)` 廃止（`GetSystemAudioCaptureDevices` / `GetSystemAudioLoopbackDevices` に分離）、`AudioInputDevice`/`AudioOutputDevice` 廃止 → `AudioSources` リスト（`CaptureAudioSource` / `LoopbackAudioSource` / `ProcessAudioSource`）に一本化。`OnAudioPacketRecorded` イベント追加（将来の音ズレ検証・STT に有用）。`IRecordingEngine` 抽象は影響なし（実装差し替えで吸収可能）
 10. **v7.0.1 実録比較の結論**: 初回測定で「mp4 が論理時間より 3.2s 短い異常」に見えたが、**比較スクリプト側の測定ミス**（Pause 減算漏れ）で、修正後は v6.6.0 と同等（差 0.7s 以内）だった。faststart は v7 でも効かず（両バージョン共通の制約）。v7 は音声系 API の Breaking Change のみが実質的な移行コスト。→ **MVP は v6.6.0（実績あり・契約整合済み）を推奨、v7 への移行は低リスト**。検証ツール: `spike/v7-comparison/`
+11. **CaptureStarted 前の Stop で Duration が巨大になるバグ（2026-09-16 修正・D 側レビューで指摘）**: `_clock` はエンジン構築時に StartNew されるため、WGC 初期化の ~2 秒窓内（および同一インスタンスの 2 回目 `StartAsync` 直後）に `StopAsync` すると `CanonicalDuration()` の起点が実撮影開始より前になり、実録時間より大幅に大きい値を返していた。**修正**: `BuildResult` で `_captureStarted == false` の場合は `Duration = TimeSpan.Zero`・`PauseIntervals = []` を返す。併せて CaptureStarted 時点で旧クロック領域の Pause 情報を破棄（WGC 窓内 Pause → Resume の区間が残るため）。統合アプリでは Coordinator が `!_captureReady` を fault 扱いするため影響なし・単独利用（ツール類）時のみ顕在化。ユニットテスト不可（完了イベントが実録依存のため）— 実機再現は `spike/capture-started-check/` で継続確認
 
 ## 4. テスト状況
 
