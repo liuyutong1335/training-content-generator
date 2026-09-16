@@ -1,4 +1,4 @@
-# 担当 A（Recording Engine）作業ログ・進捗
+﻿# 担当 A（Recording Engine）作業ログ・進捗
 
 - 担当: Liu Yutong
 - 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）+ `src/TrainingContent.Video/`（R-05・2026-09-16 にリーダー判断で A 担当に）
@@ -157,5 +157,6 @@ spike\integration-smoke\bin\x64\Debug\net8.0-windows\win-x64\IntegrationSmoke.ex
   - xunit の `Assert.DoesNotContain`（文字列）は**文化依存比較**で、ja 環境では全角 `｛` と半角 `{` が同値扱いされる → 波括弧エスケープの検証は ordinal 比較で行う
   - concat は音声パラメータ不一致（録画側 AAC と anullsrc）で壊れ得るため再エンコードで繋ぐ
 - **テスト**: `dotnet test` 32/32 合格（Core 13 + Capture 3 + Video 16）。実機検証は `spike/video-compose-check/`（Title/Ending 込み 15 秒出力の ffprobe 実測 + フレーム画素差で字幕焼き込みを証明）
-- **未解決**: O-01（無操作区間の自動短縮）は Post-MVP。TTS は v0.5 以降。sln 登録済み（Video / Video.Tests）。
+- **未解決**: O-01（無操作区間の自動短縮）は Post-MVP。TTS は v0.5 以降。sln 登録済み（Video / Video.Tests）。実装分は **PR #10**（PR #9 は spike のみ先行マージ）。main 取込み済み（2026-09-16）
   例会事項: README 構成図の owner 表記修正（Video を A に）・開発計画書 §24 への Video Generator 追記・§8 OSS 一覧への FFmpeg 追加と THIRD_PARTY_NOTICES.md への記載
+
