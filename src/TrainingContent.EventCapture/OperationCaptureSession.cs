@@ -53,6 +53,7 @@ public sealed class OperationCaptureSession : IDisposable
     private string? _lastTextWindowKey;
     private bool _started;
     private bool _stopped;
+    private bool _startFailed;
 
     public string ProjectDirectory { get; }
 
@@ -66,43 +67,76 @@ public sealed class OperationCaptureSession : IDisposable
     }
 
     /// <summary>録画を開始する（フック設置 + recording.started の書き出し）。</summary>
+    /// <remarks>
+    /// Start が途中で失敗した場合（例: events.jsonl が他プロセスに掴まれていて
+    /// recording.started の書き出しに失敗）でも、フック / ワーカースレッドを残留させない
+    /// （D5-B 統合テスト指摘 §1）。失敗したセッションは再利用できないため、
+    /// 呼び出し側は新しい OperationCaptureSession を作り直すこと。
+    /// </remarks>
     public void Start()
     {
         lock (_stateSync)
         {
             if (_started)
             {
-                throw new InvalidOperationException("このセッションは既に開始されています。");
+                throw _startFailed
+                    ? new InvalidOperationException(
+                        "開始に失敗したセッションは再利用できません。新しい OperationCaptureSession を作成してください。")
+                    : new InvalidOperationException("このセッションは既に開始されています。");
             }
 
             _started = true;
         }
 
-        Directory.CreateDirectory(ProjectDirectory);
-        _writer = new EventTimelineWriter(Path.Combine(ProjectDirectory, "events.jsonl"));
-        _uiAutomation = new UiAutomationService();
-
-        _mouseHook = new GlobalMouseHook();
-        _keyboardHook = new GlobalKeyboardHook();
-        _mouseHook.ClickCaptured += OnMouseClick;
-        _keyboardHook.KeyboardInputCaptured += OnKeyboardInput;
-
-        var hookThreadReady = new ManualResetEventSlim();
-        _hookThread = new Thread(HookThreadProc) { IsBackground = true };
-        _hookThread.SetApartmentState(ApartmentState.STA);
-        _hookThread.Start(hookThreadReady);
-        hookThreadReady.Wait();
-
-        if (_hookInitError is not null)
+        try
         {
-            throw new InvalidOperationException("フックの初期化に失敗しました。", _hookInitError);
+            Directory.CreateDirectory(ProjectDirectory);
+            _writer = new EventTimelineWriter(Path.Combine(ProjectDirectory, "events.jsonl"));
+            _uiAutomation = new UiAutomationService();
+
+            _mouseHook = new GlobalMouseHook();
+            _keyboardHook = new GlobalKeyboardHook();
+            _mouseHook.ClickCaptured += OnMouseClick;
+            _keyboardHook.KeyboardInputCaptured += OnKeyboardInput;
+
+            var hookThreadReady = new ManualResetEventSlim();
+            _hookThread = new Thread(HookThreadProc) { IsBackground = true };
+            _hookThread.SetApartmentState(ApartmentState.STA);
+            _hookThread.Start(hookThreadReady);
+            hookThreadReady.Wait();
+
+            if (_hookInitError is not null)
+            {
+                throw new InvalidOperationException("フックの初期化に失敗しました。", _hookInitError);
+            }
+
+            _worker = new Thread(ProcessQueue) { IsBackground = true };
+            _worker.Start();
+
+            _clock.Start();
+            _writer.Append("recording.started", _clock.NowMs(), new { });
         }
+        catch
+        {
+            // 部分的にでも開始してしまっていたら best-effort で後片付けする
+            // （フック解除 / フックスレッド終了 / ワーカー終了）。
+            _startFailed = true;
+            try
+            {
+                TeardownHooks();
+                _queue.CompleteAdding();
+                _worker?.Join(15000);
+            }
+            catch
+            {
+                // 後片付けの失敗は元の例外を壊さないよう握り潰す。
+            }
 
-        _worker = new Thread(ProcessQueue) { IsBackground = true };
-        _worker.Start();
-
-        _clock.Start();
-        _writer.Append("recording.started", _clock.NowMs(), new { });
+            // 失敗したセッションから recording.stopped 等を書かせない
+            // （Dispose → Stop 経路でライフサイクルイベントを追加書き込みしない）。
+            _writer = null;
+            throw;
+        }
     }
 
     /// <summary>録画を一時停止する。Pause 中の実時間は Canonical Timeline に含まれない（契約 §5.2）。</summary>
@@ -147,6 +181,19 @@ public sealed class OperationCaptureSession : IDisposable
     }
 
     /// <summary>録画を停止し、論理 DurationMs を返す。</summary>
+    /// <remarks>
+    /// 停止手順（D5-B 統合テスト指摘 §2 の修正）:
+    ///   1. フックを先に止める（stop 以降のユーザー入力を取り込まない）
+    ///   2. 終端時刻 durationMs を確定させる
+    ///   3. queue の入力を閉じ、stop 時点で受領済みのイベントをワーカーが書き切るのを待つ
+    ///   4. 残った textEntry バーストを締め切る
+    ///   5. 最後に recording.stopped を書く（必ず最終行になる）
+    /// どこかの書き込みが失敗しても（events.jsonl 掴まれ等）リソース解放は finally で
+    /// 必ず実行する。後片付けを書き込み成否に依存させない（同指摘 §1）。
+    /// 書き込み系の例外は握り潰さず呼び出し元へ伝播させる: recording.stopped を書けなかった
+    /// recording は終端イベントを欠くため、integrated recording として確定させるべきではない
+    /// （Coordinator 側は Stop 失敗を fault として扱う）。
+    /// </remarks>
     public long Stop()
     {
         lock (_stateSync)
@@ -154,14 +201,32 @@ public sealed class OperationCaptureSession : IDisposable
             ThrowIfNotRunning();
             _stopped = true;
 
-            FlushTextBuffer();
-            var durationMs = _clock.NowMs();
-            System.Windows.Forms.Application.Exit(); // フックスレッドのメッセージループを抜ける
-            _hookThread!.Join(5000);
-            _writer!.Append("recording.stopped", durationMs, new { });
-            _queue.CompleteAdding();
-            _worker!.Join(15000); // 終端イベントの取りこぼし防止（UIA・撮影は 1 Event 百ms 級）
-            return durationMs;
+            try
+            {
+                TeardownHooks();
+
+                // 終端時刻を先に確定させる（以降の drain 遅延や書き込み失敗に依存しない）。
+                var durationMs = _clock.NowMs();
+
+                _queue.CompleteAdding();
+                _worker?.Join(15000); // 終端イベントの取りこぼし防止（UIA・撮影は 1 Event 百ms 級）
+
+                // textEntry バーストはワーカーが queue を処理し終わった後に締め切る。
+                // drain 前に flush すると queue 残存イベントより古い textEntry が先に
+                // 書かれ、ファイル行順の timestampMs 非減少が崩れるため。
+                // （ワーカーの各処理パスは書き込み直前に flush 済みなので、ここで残るのは
+                //   最後の Text キーで始まった未締め切りバーストのみ）
+                FlushTextBuffer();
+
+                _writer?.Append("recording.stopped", durationMs, new { });
+
+                return durationMs;
+            }
+            finally
+            {
+                // 例外が出てもフック解除だけは保証する（書き込み失敗でフック / スレッドを残留させない）。
+                TeardownHooks();
+            }
         }
     }
 
@@ -180,6 +245,16 @@ public sealed class OperationCaptureSession : IDisposable
             {
                 // Dispose では停止失敗を握り潰す。
             }
+            finally
+            {
+                // Stop が何らかの理由で完了しなかった場合でも、スレッド / フックの
+                // 残留だけは防ぐ（TeardownHooks / CompleteAdding は冪等）。
+                try { TeardownHooks(); } catch { }
+
+                try { _queue.CompleteAdding(); } catch { }
+
+                try { _worker?.Join(1000); } catch { }
+            }
         }
     }
 
@@ -192,19 +267,41 @@ public sealed class OperationCaptureSession : IDisposable
             _keyboardHook!.Start();
             ready.Set();
             System.Windows.Forms.Application.Run(); // メッセージループでフックを維持する
-            _mouseHook.Stop();
-            _keyboardHook.Stop();
         }
         catch (Exception ex)
         {
             _hookInitError = ex;
             ready.Set();
         }
+        finally
+        {
+            // 初期化が途中で失敗した場合（例: mouse だけ設置成功して keyboard で失敗）も、
+            // 設置済みのグローバル フックを必ず解除する。
+            try { _keyboardHook?.Stop(); } catch { }
+
+            try { _mouseHook?.Stop(); } catch { }
+        }
+    }
+
+    /// <summary>フックを解除し、フックスレッドのメッセージループを終了させる（冪等）。</summary>
+    private void TeardownHooks()
+    {
+        if (_hookThread is { IsAlive: true })
+        {
+            System.Windows.Forms.Application.Exit(); // フックスレッドのメッセージループを抜ける
+            _hookThread.Join(5000);
+        }
+
+        // フックスレッドがスタックして Join がタイムアウトした場合の保険。
+        // HookThreadProc の finally でも解除されるため、通常はここでは何もしない。
+        try { _keyboardHook?.Stop(); } catch { }
+
+        try { _mouseHook?.Stop(); } catch { }
     }
 
     private void ThrowIfNotRunning()
     {
-        if (!_started || _stopped)
+        if (_startFailed || !_started || _stopped)
         {
             throw new InvalidOperationException("セッションは録画中ではありません。");
         }
@@ -382,6 +479,21 @@ public sealed class OperationCaptureSession : IDisposable
     private bool IsFiltered(WindowInfo.WindowInfo window)
     {
         return _options.WindowFilter is { } filter ? filter(window) : window.ProcessId == _ownProcessId;
+    }
+
+    // ---- テスト用シーム（InternalsVisibleTo: TrainingContent.EventCapture.Tests） ----
+
+    /// <summary>テスト用: フックスレッドが動作中か（Start 失敗時の残留確認に使用）。</summary>
+    internal bool IsHookThreadAliveForTest => _hookThread?.IsAlive ?? false;
+
+    /// <summary>テスト用: ワーカースレッドが動作中か（Stop 時の後片付け確認に使用）。</summary>
+    internal bool IsWorkerAliveForTest => _worker?.IsAlive ?? false;
+
+    /// <summary>テスト用: 実フックを経由せず mouse.click 相当を queue へ投入する。
+    /// 時刻は実クロックから採番するため、実入力が混ざっても timestampMs の単調性は保たれる。</summary>
+    internal void EnqueueMouseClickForTest(int x, int y)
+    {
+        Enqueue(new RawItem(_clock.NowMs(), RawKind.Mouse, X: x, Y: y, ClickType: MouseClickKind.Click));
     }
 
     private static UiElementPayload? ToUiElementPayload(UiElementInfo info)
