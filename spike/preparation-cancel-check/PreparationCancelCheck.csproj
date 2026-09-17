@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- RC-2（Capture preparation 中の Cancel）前提検証ツール — duty-a-progress の Spike A 同様の位置づけ。
+       使い方: プロジェクトとして実行（録画は合計 ~10 秒 + WGC 初期化 ~2 秒 × 2 セッション）。
+       出力先は既定で bin 配下、環境変数 TCS_PCC_OUTDIR で変更可能。
+       検証する項目（各ステップで自動判定）:
+         1. StartAsync 直後（CaptureStarted 前・WGC 初期化窓内）の StopAsync が即時完了する（ハングしない）
+         2. その RecordingResult.Duration は 0（契約: CaptureStarted 前 Stop semantics）
+         3. 残留 MP4 は 0 バイトまたは不存在（canonical recording ではない。
+            0 バイトファイルは既知の lib 制約によりプロセス終了までロックされる）
+         4. 同一エンジンを再利用して 2 回目の録画（StartAsync → CaptureStarted → StopAsync）が正常に完了する
+         5. (対照) 正常録画の停止直後はファイルロックがないこと -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TrainingContent.Capture\TrainingContent.Capture.csproj" />
+  </ItemGroup>
+
+</Project>
