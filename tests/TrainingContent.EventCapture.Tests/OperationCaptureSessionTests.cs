@@ -153,4 +153,26 @@ public class OperationCaptureSessionTests : IDisposable
         // recording.stopped の timestampMs は Stop が返した durationMs と一致すること。
         Assert.Equal(durationMs, events[^1].TimestampMs);
     }
+
+    [Fact]
+    public void Pause中に投入したイベントはResume後も境界時刻で洩れず破棄される()
+    {
+        // 監査 NEW-2: 境界フィルタが < だと Pause 中に発生した Event の
+        // 凍結 timestampMs（== boundary）が Resume 後の処理ですり抜けて記録される。
+        using var session = CreateSession();
+        session.Start();
+        session.Pause();
+
+        // Pause 中の Canonical 時刻は凍結値（= boundary）で採番される。
+        session.EnqueueMouseClickForTest(777, 777);
+
+        session.Resume();
+        session.Stop();
+
+        var lines = File.ReadAllLines(_eventsPath);
+        Assert.DoesNotContain(lines, line => line.Contains("mouse.click") && line.Contains("\"x\": 777"));
+        // Pause 自体のライフサイクルイベントは記録されていること（フィルタが広すぎないことの確認）。
+        Assert.Contains(lines, line => line.Contains("\"recording.paused\""));
+        Assert.Contains(lines, line => line.Contains("\"recording.resumed\""));
+    }
 }

@@ -19,7 +19,7 @@ MIT のコードをコピー・改変した場合も、著作権表示および�
 - License: MIT License
 - Copyright: Copyright (c) 2025 ebanez8 (リポジトリ LICENSE より。正式表記は LICENSE ファイルを確認すること)
 - 利用範囲: Global Mouse/Keyboard Hook、UI Automation、Screenshot の部分移植（fork はしない）
-- コピー/参考ファイル: `spike/operation-capture/` に移植
+- コピー/参考ファイル: `spike/operation-capture/` に移植（出荷コードは `src/TrainingContent.EventCapture/` にあり）
   - `Hooks/NativeMethods.cs` — src/OpenSteps.Capture/NativeMethods.cs をコピー（スパイクで使用する P/Invoke のみ残す）
   - `Hooks/GlobalMouseHook.cs` — src/OpenSteps.Capture/GlobalMouseHook.cs + ClickCapturedEventArgs.cs をコピー（SpikeClickType に置換）
   - `Hooks/GlobalKeyboardHook.cs` — src/OpenSteps.Capture/GlobalKeyboardHook.cs + KeyboardInputEventArgs.cs をコピー（特殊キー名を契約 §11.2 の表記に合わせた）
@@ -28,6 +28,14 @@ MIT のコードをコピー・改変した場合も、著作権表示および�
   - `Screenshot/ScreenshotCapture.cs` — src/OpenSteps.Capture/DpiAwarenessService.cs の Per-Monitor V2 スレッド切替方式を参考
   - `WindowInfoService.cs` — src/OpenSteps.Capture/ActiveWindowService.cs を参考に最小化
   - `ScreenshotCapture.cs` — src/OpenSteps.Capture/ScreenshotService.cs を参考に最小化
+- 出荷コード内の対応ファイル（`src/TrainingContent.EventCapture/`。上記スパイク版の移植を本線に取り込んだもの）:
+  - `Hooks/NativeMethods.cs`（spike 版と同源）
+  - `Hooks/GlobalMouseHook.cs`（ClickCapturedEventArgs を本モジュール向けに調整）
+  - `Hooks/GlobalKeyboardHook.cs`（キー分類を契約 §11.1〜§11.3 に整合）
+  - `UiAutomation/UiAutomationService.cs`
+  - `UiAutomation/UiElementInfo.cs`
+  - `Screenshot/ScreenshotCapture.cs`（ScreenshotService.cs 参考）
+  - `WindowInfo/WindowInfoService.cs`（ActiveWindowService.cs 参考）
 - 参照 Commit SHA: 8058980865ac07f261b97b7270776c486b942a16
 - 改変: namespace 変更、OpenSteps.Core モデル依存の削除、キー名表記の契約合わせ、不要機能（Redaction/複数モード等）の削減
 

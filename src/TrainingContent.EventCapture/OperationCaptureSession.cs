@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using TrainingContent.EventCapture.Hooks;
 using TrainingContent.EventCapture.Screenshot;
@@ -54,6 +55,14 @@ public sealed class OperationCaptureSession : IDisposable
     private bool _started;
     private bool _stopped;
     private bool _startFailed;
+
+    /// <summary>Stop の最終 flush 後に worker 側の textEntry 追加を禁止するフラグ
+    /// （recording.stopped より後への keyboard.textEntry 書き込みを防ぐ）。</summary>
+    private bool _textFlushFinal;
+
+    /// <summary>キー受領から処理までの遅延がこれを超えたら Password 判定を信頼せず
+    /// sensitive に倒す（fail-closed。処理時点のフォーカスは入力時点と異なりうる）。</summary>
+    internal static long PasswordJudgementLagLimitMs { get; } = 500;
 
     public string ProjectDirectory { get; }
 
@@ -216,7 +225,8 @@ public sealed class OperationCaptureSession : IDisposable
                 // 書かれ、ファイル行順の timestampMs 非減少が崩れるため。
                 // （ワーカーの各処理パスは書き込み直前に flush 済みなので、ここで残るのは
                 //   最後の Text キーで始まった未締め切りバーストのみ）
-                FlushTextBuffer();
+                // final: 以降の worker 側 textEntry 追加を禁止する（stopped が最終行であることの保証）。
+                FlushTextBuffer(final: true);
 
                 _writer?.Append("recording.stopped", durationMs, new { });
 
@@ -317,12 +327,15 @@ public sealed class OperationCaptureSession : IDisposable
 
     private void OnMouseClick(object? sender, ClickCapturedEventArgs e)
     {
-        Enqueue(new RawItem(_clock.NowMs(), RawKind.Mouse, X: e.X, Y: e.Y, ClickType: e.ActionType));
+        // 物理クリック時刻（QPC）をそのまま運ぶ。ダブルクリック判定待ちで
+        // 保留解除されるまで最大 ~900ms 遅れるため、受領時刻で採番すると
+        // Canonical Timeline に系統誤差が乗る（→ ProcessItem で Canonical 化）。
+        Enqueue(new RawItem(e.CapturedQpcTimestamp, RawKind.Mouse, X: e.X, Y: e.Y, ClickType: e.ActionType));
     }
 
     private void OnKeyboardInput(object? sender, KeyboardInputEventArgs e)
     {
-        Enqueue(new RawItem(_clock.NowMs(), RawKind.Key, KeyKind: e.Kind, KeyName: e.KeyName, ShortcutName: e.ShortcutName));
+        Enqueue(new RawItem(Stopwatch.GetTimestamp(), RawKind.Key, KeyKind: e.Kind, KeyName: e.KeyName, ShortcutName: e.ShortcutName));
     }
 
     private void ProcessQueue()
@@ -342,31 +355,34 @@ public sealed class OperationCaptureSession : IDisposable
 
     private void ProcessItem(RawItem item)
     {
+        // Raw Event の QPC タイムスタンプ（物理発生時刻）を Canonical ms に変換する。
+        // Pause 中に発生した Event は区間開始時刻の凍結値に変換されるため、
+        // 下の境界フィルタ（<=）で確実に弾かれる。
+        var timestampMs = _clock.ToCanonicalMs(item.QpcTimestamp);
+
         // Pause 中のユーザー操作は Canonical Timeline の外側のため破棄する。
         // さらに Pause より前に発生していながら処理が追いつかなかった
         // 後追いイベント（例: P 押下自体のキーダウン）も破棄する。
+        // 境界そのもの（==）は Pause 中に発生した Event の凍結 timestampMs なので破棄対象に含める。
         var boundary = _pauseBoundaryMs;
-        if (_clock.IsPaused || (boundary.HasValue && item.TimestampMs < boundary.Value))
+        if (_clock.IsPaused || (boundary.HasValue && timestampMs <= boundary.Value))
         {
             return;
         }
 
         if (item.Kind == RawKind.Mouse)
         {
-            ProcessMouse(item);
+            ProcessMouse(item, timestampMs);
         }
         else if (item.Kind == RawKind.Key)
         {
-            ProcessKey(item);
+            ProcessKey(item, timestampMs);
         }
     }
 
-    private void ProcessMouse(RawItem item)
+    private void ProcessMouse(RawItem item, long timestampMs)
     {
-        lock (_textSync)
-        {
-            FlushTextBuffer();
-        }
+        FlushTextBuffer();
 
         var window = WindowInfoService.FromPoint(item.X, item.Y);
         if (IsFiltered(window))
@@ -384,7 +400,7 @@ public sealed class OperationCaptureSession : IDisposable
             _ => "mouse.click"
         };
 
-        _writer!.Append(eventType, item.TimestampMs, new MousePayload(
+        _writer!.Append(eventType, timestampMs, new MousePayload(
             item.X,
             item.Y,
             item.ClickType == MouseClickKind.RightClick ? "right" : "left",
@@ -395,7 +411,7 @@ public sealed class OperationCaptureSession : IDisposable
             screenshotPath));
     }
 
-    private void ProcessKey(RawItem item)
+    private void ProcessKey(RawItem item, long timestampMs)
     {
         switch (item.KeyKind)
         {
@@ -407,12 +423,33 @@ public sealed class OperationCaptureSession : IDisposable
                     return;
                 }
 
+                // UIA 呼び出しは _textSync の外で行う（UA-1 対策）:
+                // UIA は無応答になりうるため、_textSync を保持したまま呼ぶと
+                // Pause / Stop の flush が同じロックで無期限にブロックする。
+                // ロック保持範囲は aggregator への短い追加のみにする。
+                var focused = _uiAutomation!.GetFocusedElement();
+
+                // Password 判定は毎キー行う（バースト途中でパスワード欄へ
+                // 移った場合も keyCount 漏れがないように。契約 §11.1）。
+                // target はバースト先頭のフォーカス要素を使う。
+                // 判定は処理時点のフォーカスで行うため、(1) UIA が失敗した場合、
+                // (2) 受領からの処理遅延が閾値を超えた場合（入力時のフォーカスを
+                //     もはや参照できない）は fail-closed で sensitive に倒す
+                // （keyCount = null にする誤りは契約 §11.1 違反になるため）。
+                var judgementLagged = _clock.ElapsedSinceMs(item.QpcTimestamp) > PasswordJudgementLagLimitMs;
+                var isPassword = focused.Quality == UiAutomationQuality.UiAutomationFailed
+                    || focused.IsPassword
+                    || judgementLagged;
+
                 lock (_textSync)
                 {
-                    // Password 判定は毎キー行う（バースト途中でパスワード欄へ
-                    // 移った場合も keyCount 漏れがないように。契約 §11.1）。
-                    // target はバースト先頭のフォーカス要素を使う。
-                    var focused = _uiAutomation!.GetFocusedElement();
+                    if (_textFlushFinal)
+                    {
+                        // Stop の最終 flush 後に到達したキー。バーストを再開すると
+                        // recording.stopped より後へ書かれるため破棄する。
+                        return;
+                    }
+
                     var windowKey = $"{window.ProcessId}:{window.WindowTitle}";
                     if (_textAggregator.IsEmpty || _lastTextWindowKey != windowKey)
                     {
@@ -420,9 +457,8 @@ public sealed class OperationCaptureSession : IDisposable
                         _lastTextWindowKey = windowKey;
                     }
 
-                    var isPassword = focused.IsPassword;
                     var flushed = _textAggregator.Add(
-                        item.TimestampMs,
+                        timestampMs,
                         isPassword,
                         ToTargetPayload(_textTarget.Element),
                         window.ProcessName,
@@ -437,27 +473,20 @@ public sealed class OperationCaptureSession : IDisposable
             }
 
             case KeyboardInputKind.SpecialKey:
-                lock (_textSync)
-                {
-                    FlushTextBuffer();
-                }
-
-                _writer!.Append("keyboard.specialKey", item.TimestampMs, new SpecialKeyPayload(item.KeyName ?? "Unknown"));
+                FlushTextBuffer();
+                _writer!.Append("keyboard.specialKey", timestampMs, new SpecialKeyPayload(item.KeyName ?? "Unknown"));
                 break;
 
             case KeyboardInputKind.Shortcut:
-                lock (_textSync)
-                {
-                    FlushTextBuffer();
-                }
-
-                _writer!.Append("keyboard.shortcut", item.TimestampMs, new ShortcutPayload(item.ShortcutName ?? "Unknown"));
+                FlushTextBuffer();
+                _writer!.Append("keyboard.shortcut", timestampMs, new ShortcutPayload(item.ShortcutName ?? "Unknown"));
                 break;
         }
     }
 
     /// <summary>保持中の textEntry バーストを締め切って events.jsonl に出力する。</summary>
-    private void FlushTextBuffer()
+    /// <param name="final">Stop の締め切りの場合 true。以降の textEntry 追加を禁止する。</param>
+    private void FlushTextBuffer(bool final = false)
     {
         if (_writer is null)
         {
@@ -473,6 +502,10 @@ public sealed class OperationCaptureSession : IDisposable
             }
 
             _lastTextWindowKey = null;
+            if (final)
+            {
+                _textFlushFinal = true;
+            }
         }
     }
 
@@ -490,10 +523,10 @@ public sealed class OperationCaptureSession : IDisposable
     internal bool IsWorkerAliveForTest => _worker?.IsAlive ?? false;
 
     /// <summary>テスト用: 実フックを経由せず mouse.click 相当を queue へ投入する。
-    /// 時刻は実クロックから採番するため、実入力が混ざっても timestampMs の単調性は保たれる。</summary>
+    /// 時刻は実クロック（QPC）から採番するため、実入力が混ざっても timestampMs の単調性は保たれる。</summary>
     internal void EnqueueMouseClickForTest(int x, int y)
     {
-        Enqueue(new RawItem(_clock.NowMs(), RawKind.Mouse, X: x, Y: y, ClickType: MouseClickKind.Click));
+        Enqueue(new RawItem(Stopwatch.GetTimestamp(), RawKind.Mouse, X: x, Y: y, ClickType: MouseClickKind.Click));
     }
 
     private static UiElementPayload? ToUiElementPayload(UiElementInfo info)
@@ -523,7 +556,7 @@ public sealed class OperationCaptureSession : IDisposable
     }
 
     private sealed record RawItem(
-        long TimestampMs,
+        long QpcTimestamp,
         string Kind,
         int X = 0,
         int Y = 0,

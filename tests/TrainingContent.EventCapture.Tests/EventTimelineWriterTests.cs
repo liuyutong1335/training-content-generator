@@ -102,4 +102,37 @@ public class EventTimelineWriterTests : IDisposable
         var path = doc.RootElement.GetProperty("payload").GetProperty("screenshotPath").GetString();
         Assert.Equal("screenshots/original/event-000001.png", path);
     }
+
+    [Fact]
+    public void 既存ファイルへの追加開始ではseqを前回の最終値から続ける()
+    {
+        // 監査 NEW-1: re-record で既存 events.jsonl に新 session を開始すると
+        // seq が 1 から再開し、契約 §8.1（Seq start 1 / 単調増加）に違反する。
+        _writer.Append("recording.started", 0, new { });
+        _writer.Append("mouse.click", 100, new MousePayload(1, 2, "left", 1, null, null, null, null));
+        _writer.Append("recording.stopped", 900, new { });
+
+        var secondWriter = new EventTimelineWriter(_writer.FilePath);
+        var (seq, _) = secondWriter.Append("recording.started", 1000, new { });
+
+        Assert.Equal(4, seq); // 前回の最終 seq 3 の次
+        Assert.Equal(4, secondWriter.Count);
+
+        var lines = File.ReadAllLines(_writer.FilePath);
+        var seqs = lines.Select(line => JsonDocument.Parse(line).RootElement.GetProperty("seq").GetInt64()).ToArray();
+        Assert.Equal(new[] { 1L, 2L, 3L, 4L }, seqs); // ファイル全体で単調増加
+    }
+
+    [Fact]
+    public void seq読み取り時に壊れた最終行があっても新規開始として動作する()
+    {
+        // 破損行からの復旧より契約違反（seq 重複）を避けるのは難しいため、
+        // 読めなければ 0 から再開する（防御側の仕様を固定するテスト）。
+        File.WriteAllLines(_writer.FilePath, ["not json"]);
+
+        var writer = new EventTimelineWriter(_writer.FilePath);
+        var (seq, _) = writer.Append("recording.started", 0, new { });
+
+        Assert.Equal(1, seq);
+    }
 }

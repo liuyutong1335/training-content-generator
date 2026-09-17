@@ -9,6 +9,9 @@
 //               （IME 有効時は通常の印刷可能キーが VK_PROCESSKEY に置き換わるため、
 //                 そのままだと日本語入力が一切記録されない）。
 //               実入力文字は取得しない（契約 §11.1 / §27 セキュリティ方針）。
+//               Alt/Ctrl 付きのキーを specialKey に分類しない（Alt+Tab → "Tab" 等の
+//               誤記録防止。修飾キー付きは MVP 対象の Ctrl 系ショットカートのみ）。
+//               Ctrl+Shift+S のような Shift 併用を表記に反映する。
 using System.Runtime.InteropServices;
 
 namespace TrainingContent.EventCapture.Hooks;
@@ -84,7 +87,11 @@ public sealed class GlobalKeyboardHook : IDisposable
             try
             {
                 var data = Marshal.PtrToStructure<NativeMethods.KBDLLHOOKSTRUCT>(lParam);
-                var captured = ClassifyKey((int)data.VkCode);
+                var captured = ClassifyKey(
+                    (int)data.VkCode,
+                    ctrl: IsDown(0x11) || IsDown(0xA2) || IsDown(0xA3),
+                    alt: IsDown(0x12) || IsDown(0xA4) || IsDown(0xA5),
+                    shift: IsDown(0x10) || IsDown(0xA0) || IsDown(0xA1));
                 if (captured is not null)
                 {
                     KeyboardInputCaptured?.Invoke(this, captured);
@@ -99,12 +106,9 @@ public sealed class GlobalKeyboardHook : IDisposable
         return NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
     }
 
-    private static KeyboardInputEventArgs? ClassifyKey(int vkCode)
+    /// <summary>修飾キー状態は引数で受け取る（GetAsyncKeyState は実キー状態依存のためテストで注入できるように）。</summary>
+    internal static KeyboardInputEventArgs? ClassifyKey(int vkCode, bool ctrl, bool alt, bool shift)
     {
-        var ctrl = IsDown(0x11) || IsDown(0xA2) || IsDown(0xA3);
-        var alt = IsDown(0x12) || IsDown(0xA4) || IsDown(0xA5);
-        var shift = IsDown(0x10) || IsDown(0xA0) || IsDown(0xA1);
-
         if (ctrl)
         {
             var shortcut = vkCode switch
@@ -119,8 +123,19 @@ public sealed class GlobalKeyboardHook : IDisposable
 
             if (shortcut is not null)
             {
-                return new KeyboardInputEventArgs(KeyboardInputKind.Shortcut, null, shortcut);
+                // Shift 押下を表記に反映する（Ctrl+Shift+S を Ctrl+S と誤記録しないため）。
+                var name = shift ? shortcut.Replace("Ctrl+", "Ctrl+Shift+", StringComparison.Ordinal) : shortcut;
+                return new KeyboardInputEventArgs(KeyboardInputKind.Shortcut, null, name);
             }
+        }
+
+        // Alt / Ctrl 付きのキーは specialKey にしない
+        // （Alt+Tab を specialKey "Tab"、Ctrl+Enter を specialKey "Enter" と
+        //   誤記録して手順書に余分な Step を混入させないため。契約 §11.2 の
+        //   MVP 対象は修飾キーなしの特殊キーのみ）。
+        if (alt || ctrl)
+        {
+            return null;
         }
 
         var special = vkCode switch
@@ -140,11 +155,6 @@ public sealed class GlobalKeyboardHook : IDisposable
         if (special is not null)
         {
             return new KeyboardInputEventArgs(KeyboardInputKind.SpecialKey, special, null);
-        }
-
-        if (alt || ctrl)
-        {
-            return null;
         }
 
         // VK_PROCESSKEY (0xE5): IME がキーを消費した合図。実文字は取得できないが
