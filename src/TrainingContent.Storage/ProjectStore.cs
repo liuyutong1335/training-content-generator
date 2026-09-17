@@ -414,6 +414,11 @@ public sealed class ProjectStore
             throw new ProjectStoreException($"project.json が空です: {path}");
         }
 
+        // Persistence preflight: validator が安全に走れる最低限の object graph を保証する。
+        // ProjectValidator は Steps / SourceEventIds を非 null 前提で走査するため、先に構造不正を
+        // ProjectStoreException へ変換しておく（詳細は ValidatePersistedStructure の doc 参照）。
+        ValidatePersistedStructure(project, path);
+
         // unsupported schemaVersion もここで検出される（Contract §23）。
         var errors = ProjectValidator.Validate(project);
         if (errors.Count > 0)
@@ -425,6 +430,77 @@ public sealed class ProjectStore
 
         return project;
     }
+
+    /// <summary>
+    /// Persisted structure の preflight。読み込んだ object graph が、以降の検証・表示処理を
+    /// 安全に通せる最低限の形になっていることを確認する。
+    ///
+    /// <para>
+    /// <b><see cref="ProjectValidator"/> の代替ではない。</b> Contract / business validation は
+    /// validator の責任のままにし、ここでは「validator と <see cref="ProjectSummary"/> が
+    /// 非 null 前提で触る property」だけを見る（validator が例外を投げずに走れるようにするのが目的）。
+    /// </para>
+    /// <para>
+    /// Canonical な project.json は Contract 準拠であるべきなので、null は破損の証拠として扱い
+    /// <b>reject する</b>（persisted null-array policy = REJECT）。<c>null → []</c> の自動正規化は
+    /// しない——破損の証拠が消え、Load が暗黙にデータ意味を変えてしまうため。読み込みが file /
+    /// directory を書き換えることもない（auto repair しない）。
+    /// </para>
+    /// </summary>
+    /// <exception cref="ProjectStoreException">構造不正を検出した場合。</exception>
+    private static void ValidatePersistedStructure(TrainingProject project, string path)
+    {
+        if (project.Outputs is null)
+        {
+            throw MalformedProject(path, "outputs が null です（Required field。Contract §6.1）");
+        }
+
+        if (project.Prerequisites is null)
+        {
+            throw MalformedProject(path, "prerequisites が null です");
+        }
+
+        if (project.Steps is null)
+        {
+            throw MalformedProject(path, "steps が null です");
+        }
+
+        for (var i = 0; i < project.Steps.Count; i++)
+        {
+            // JSON の [null] は List<TrainingStep> に null element として入る。
+            TrainingStep? step = project.Steps[i];
+            if (step is null)
+            {
+                throw MalformedProject(path, $"steps[{i}] が null です");
+            }
+
+            if (step.SourceEventIds is null)
+            {
+                throw MalformedProject(path, $"steps[{i}].sourceEventIds が null です");
+            }
+        }
+
+        // Directory 名は filesystem identity であり Project.Id と一致しているべき。
+        // 一致しない Project は「別 Project を上書きしている」等の破損なので reject する
+        // （directory rename / Id 書換えによる auto repair はしない）。
+        var directory = Path.GetDirectoryName(path);
+        var directoryName = directory is null ? null : Path.GetFileName(directory);
+
+        if (directoryName is null || !Guid.TryParse(directoryName, out var directoryId))
+        {
+            throw MalformedProject(path, $"Project directory 名が GUID ではありません: {directoryName}");
+        }
+
+        if (directoryId != project.Id)
+        {
+            throw MalformedProject(
+                path,
+                $"Project directory の GUID と project.Id が一致しません（directory={directoryId:D} / id={project.Id:D}）");
+        }
+    }
+
+    private static ProjectStoreException MalformedProject(string path, string detail) =>
+        new($"project.json の構造が不正です: {path}" + Environment.NewLine + detail);
 
     private static void TryDeleteDirectory(string directory)
     {

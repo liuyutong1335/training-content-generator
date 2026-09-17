@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Nodes;
 using TrainingContent.Core;
 using TrainingContent.Core.Models;
 using Xunit;
@@ -684,6 +685,176 @@ public class ProjectStoreTests
         Assert.False(File.Exists(tempPath), "project.json.tmp が残っている");
         var loaded = await store.LoadProjectAsync(project.Id);
         Assert.Equal("v2", loaded!.Objective);
+    }
+
+    // =====================================================================
+    // Persisted structure preflight — malformed project containment
+    //
+    // 外部 / 過去 version / 手修正で壊れた project.json が deserialize 自体には成功する場合、
+    // 非 null 前提の property が null になり ProjectValidator や ProjectSummary で
+    // 制御されない例外（ArgumentNullException 等）が飛ぶ。Persistence boundary で
+    // ProjectStoreException に変換することを検証する。
+    // =====================================================================
+
+    /// <summary>
+    /// project.json を JSON レベルで改変して書き戻す。生の文字列を組み立てず、正しい JSON を
+    /// 作ってから 1 箇所だけ壊す（他の検証に引っかからないように）。
+    /// </summary>
+    private static async Task MutateProjectJsonAsync(string path, Action<JsonObject> mutate)
+    {
+        var node = JsonNode.Parse(await File.ReadAllTextAsync(path))!.AsObject();
+        mutate(node);
+        await File.WriteAllTextAsync(
+            path,
+            node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    /// <summary>steps を 1 件持つ Contract 準拠 Project を作る（step 系 preflight ケース用）。</summary>
+    private static async Task<TrainingProject> CreateProjectWithOneStepAsync(ProjectStore store)
+    {
+        var project = await store.CreateProjectAsync("手順つき教材");
+
+        project.Recording = new RecordingInfo
+        {
+            MediaPath = "raw/recording.mp4",
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            DurationMs = 1000,
+        };
+        project.Steps.Add(new TrainingStep
+        {
+            Id = Guid.NewGuid(),
+            Order = 1,
+            StartMs = 0,
+            Action = StepActions.Click,
+            Title = "手順1",
+            SourceEventIds = [Guid.NewGuid()],
+        });
+        project.Revision++;
+
+        await store.SaveProjectAsync(project);
+        return project;
+    }
+
+    // T-D2-20 null required collections
+    [Theory]
+    [InlineData("outputs")]
+    [InlineData("prerequisites")]
+    [InlineData("steps")]
+    public async Task T_D2_20_Load_RejectsNullRequiredCollection(string field)
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+        var project = await store.CreateProjectAsync("壊れた教材");
+
+        await MutateProjectJsonAsync(ProjectJsonPath(temp, project.Id), node => node[field] = null);
+
+        await Assert.ThrowsAsync<ProjectStoreException>(() => store.LoadProjectAsync(project.Id));
+    }
+
+    // T-D2-21 null step element / null sourceEventIds
+    [Theory]
+    [InlineData("step")]
+    [InlineData("sourceEventIds")]
+    public async Task T_D2_21_Load_RejectsMalformedStep(string kind)
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+        var project = await CreateProjectWithOneStepAsync(store);
+
+        await MutateProjectJsonAsync(ProjectJsonPath(temp, project.Id), node =>
+        {
+            var steps = node["steps"]!.AsArray();
+            if (kind == "step")
+            {
+                steps[0] = null;
+            }
+            else
+            {
+                steps[0]!.AsObject()["sourceEventIds"] = null;
+            }
+        });
+
+        await Assert.ThrowsAsync<ProjectStoreException>(() => store.LoadProjectAsync(project.Id));
+    }
+
+    // T-D2-22 directory 名の GUID と project.Id の不一致
+    [Fact]
+    public async Task T_D2_22_Load_RejectsDirectoryIdMismatch()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+        var project = await store.CreateProjectAsync("コピー元");
+
+        // <guid> directory をコピーした状況を作る（中身の Id はコピー元のまま）。
+        var otherId = Guid.NewGuid();
+        var otherDir = ProjectDir(temp, otherId);
+        Directory.CreateDirectory(otherDir);
+        File.Copy(
+            ProjectJsonPath(temp, project.Id),
+            Path.Combine(otherDir, ProjectStore.ProjectFileName));
+
+        await Assert.ThrowsAsync<ProjectStoreException>(() => store.LoadProjectAsync(otherId));
+    }
+
+    // T-D2-23 List containment — 壊れた 1 件が正常 Project の列挙を妨げない
+    [Fact]
+    public async Task T_D2_23_List_SkipsMalformedAndKeepsValidOnes()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var a = await store.CreateProjectAsync("正常A");
+        var broken = await store.CreateProjectAsync("壊れた教材");
+        var b = await store.CreateProjectAsync("正常B");
+
+        await MutateProjectJsonAsync(ProjectJsonPath(temp, broken.Id), node => node["outputs"] = null);
+
+        var list = await store.ListProjectsAsync();
+
+        Assert.Equal(2, list.Count);
+        Assert.Contains(list, s => s.Id == a.Id);
+        Assert.Contains(list, s => s.Id == b.Id);
+        Assert.DoesNotContain(list, s => s.Id == broken.Id);
+    }
+
+    // T-D2-24 no auto repair — 読み込みが file / directory を書き換えない
+    [Fact]
+    public async Task T_D2_24_Load_DoesNotRepairMalformedProject()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+        var project = await store.CreateProjectAsync("壊れた教材");
+
+        var path = ProjectJsonPath(temp, project.Id);
+        var dir = ProjectDir(temp, project.Id);
+
+        await MutateProjectJsonAsync(path, node => node["outputs"] = null);
+
+        var beforeBytes = await File.ReadAllBytesAsync(path);
+        var beforeDirectories = Directory.GetDirectories(temp.Root);
+
+        await Assert.ThrowsAsync<ProjectStoreException>(() => store.LoadProjectAsync(project.Id));
+
+        Assert.Equal(beforeBytes, await File.ReadAllBytesAsync(path));
+        Assert.Equal(beforeDirectories, Directory.GetDirectories(temp.Root));
+        Assert.True(Directory.Exists(dir), "Project directory が消えている");
+    }
+
+    // T-D2-25 preflight が正常 Project を弾かないこと（回帰）
+    [Fact]
+    public async Task T_D2_25_ValidProject_StillRoundTripsThroughPreflight()
+    {
+        using var temp = new TempProjectsRoot();
+        var store = new ProjectStore(temp.Root);
+
+        var project = await CreateProjectWithOneStepAsync(store);
+
+        var loaded = await store.LoadProjectAsync(project.Id);
+
+        Assert.NotNull(loaded);
+        Assert.Equal(project.Id, loaded!.Id);
+        Assert.Single(loaded.Steps);
+        Assert.Single(loaded.Steps[0].SourceEventIds);
     }
 
     // =====================================================================
