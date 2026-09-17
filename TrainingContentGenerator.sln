@@ -22,6 +22,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Screenshot"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Screenshot.Tests", "tests\TrainingContent.Screenshot.Tests\TrainingContent.Screenshot.Tests.csproj", "{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PreparationCancelCheck", "spike\preparation-cancel-check\PreparationCancelCheck.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -68,6 +70,10 @@ Global
 		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Debug|x64.Build.0 = Debug|x64
 		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Release|x64.ActiveCfg = Release|x64
 		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Release|x64.Build.0 = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Debug|x64.ActiveCfg = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Debug|x64.Build.0 = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Release|x64.ActiveCfg = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

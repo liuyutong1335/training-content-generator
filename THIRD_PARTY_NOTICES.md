@@ -7,11 +7,30 @@ MIT のコードをコピー・改変した場合も、著作権表示および�
 
 - Repository: https://github.com/sskodje/ScreenRecorderLib
 - License: MIT License
-- Copyright: Copyright (c) 2017 Ramin Kaviani
+- Copyright: Copyright (c) 2017 Sverre Skodje
+  （根拠: NuGet パッケージ 6.6.0 に同梱の LICENSE ファイル原文。nuspec の copyright 表記は
+  「Copyright © Sverre Kristoffer Skodje 2025」だが、LICENSE の原文どおりを記載する）
 - 利用範囲: NuGet パッケージ依存（画面録画・システム音声・マイク録音）
+  - 正式実装の対象 version: ScreenRecorderLib 6.6.0（`src/TrainingContent.Capture/TrainingContent.Capture.csproj` で固定）
 - コピー/参考ファイル: なし（NuGet 依存のみ）
-- 参照 Commit SHA: （Spike A 実施時に v6.6.0 / v7.0.1 のタグを記録）
+- 参照 Commit: upstream tag v6.6.0（Spike A 実施時に v6.6.0 / v7.0.1 のタグを記録）
 - 改変: なし
+
+## FFmpeg（BtbN FFMBuilds LGPL ビルド）
+
+- 取得元: https://github.com/BtbN/FFmpeg-Builds （`tools/get-ffmpeg.ps1` が実行時に取得）
+  - 現在の取得対象: `ffmpeg-master-latest-win64-lgpl.zip`（latest ローリングタグ・未 pin）
+  - 実機確認済み build identification: ffmpeg version N-126574-g912208af28-20260915（2026-09-15 build）
+- License: LGPL-3.0（build 構成に `--enable-version3` を確認。libx264 等 GPL 要素は含まれない:
+  `--enable-libopenh264 --disable-libx264` を実機 build ログで確認済み）
+- 利用形態: 外部プロセス起動（`Process.Start`）。リンクはしていない（`FfmpegVideoRenderer` 参照）
+  - ffmpeg.exe（エンコード・合成）と ffprobe.exe（解像度・Duration 調査）を使用
+- 同梱/配布: 行わない。リポジトリにバイナリをコミットせず（.gitignore の `tools/ffmpeg/`）、
+  利用者が `tools/get-ffmpeg.ps1` で別途取得する
+- エンコーダ: libopenh264（Cisco OpenH264 を BtbN がソースからビルドしたもの。
+  Cisco 公式バイナリの特許ライセンスは適用されないため、本プロジェクトの成果物を
+  外部配布する場合は要確認。社内研修利用の範囲では問題ない想定）
+- 改変: なし（バイナリを取得してそのまま使用）
 
 ## OpenSteps
 
