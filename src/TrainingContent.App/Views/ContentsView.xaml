@@ -78,7 +78,7 @@
                                         Binding="{Binding HasManual, Converter={StaticResource ArtifactStatusConverter}}"
                                         Width="90" />
                     <DataGridTextColumn Header="動画"
-                                        Binding="{Binding HasVideo, Converter={StaticResource ArtifactStatusConverter}}"
+                                        Binding="{Binding VideoStatus, Converter={StaticResource ArtifactStatusConverter}}"
                                         Width="90" />
                 </DataGrid.Columns>
             </DataGrid>
@@ -120,9 +120,15 @@
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     Margin="0,16,0,0">
+            <Button x:Name="GenerateButton"
+                    Content="動画を生成"
+                    Width="120" Height="30"
+                    IsEnabled="False"
+                    Click="Generate_Click" />
             <Button x:Name="OpenButton"
                     Content="開く"
                     Width="88" Height="30"
+                    Margin="8,0,0,0"
                     IsEnabled="False"
                     Click="Open_Click" />
             <Button x:Name="RenameButton"

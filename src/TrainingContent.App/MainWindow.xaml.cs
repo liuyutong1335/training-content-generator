@@ -35,12 +35,14 @@ public partial class MainWindow : Window
         ProjectStore projectStore,
         CurrentProjectContext currentProject,
         ProjectWorkspace workspace,
-        RecordingCoordinator recordingCoordinator)
+        RecordingCoordinator recordingCoordinator,
+        VideoGenerationCoordinator videoGenerationCoordinator)
     {
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(currentProject);
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(recordingCoordinator);
+        ArgumentNullException.ThrowIfNull(videoGenerationCoordinator);
 
         InitializeComponent();
 
@@ -55,7 +57,7 @@ public partial class MainWindow : Window
         _recordingView = new RecordingView(recordingCoordinator, currentProject);
         _recordingView.StatusChanged += OnStatusChanged;
 
-        _contentsView = new ContentsView(projectStore, workspace);
+        _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator);
         _contentsView.StatusChanged += OnStatusChanged;
         _contentsView.ProjectActivated += OnProjectActivated;
 

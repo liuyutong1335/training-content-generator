@@ -32,9 +32,11 @@ public partial class ContentsView : UserControl
 
     private readonly ProjectStore _projectStore;
     private readonly ProjectWorkspace _workspace;
+    private readonly VideoGenerationCoordinator _videoGeneration;
     private readonly ObservableCollection<ProjectSummary> _projects = [];
 
     private bool _isLoading;
+    private bool _isGenerating;
     private bool _hasLoaded;
 
     /// <summary>Status Bar 表示用の単純な通知。</summary>
@@ -43,15 +45,20 @@ public partial class ContentsView : UserControl
     /// <summary>Project を作成・オープンし、Home 表示へ切り替えるべきとき。</summary>
     public event EventHandler<string>? ProjectActivated;
 
-    public ContentsView(ProjectStore projectStore, ProjectWorkspace workspace)
+    public ContentsView(
+        ProjectStore projectStore,
+        ProjectWorkspace workspace,
+        VideoGenerationCoordinator videoGeneration)
     {
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(videoGeneration);
 
         InitializeComponent();
 
         _projectStore = projectStore;
         _workspace = workspace;
+        _videoGeneration = videoGeneration;
 
         ProjectGrid.ItemsSource = _projects;
 
@@ -195,6 +202,12 @@ public partial class ContentsView : UserControl
     /// <summary>選択中の Project を開く。Open ボタンとダブルクリックの共通経路。</summary>
     private async Task OpenSelectedProjectAsync()
     {
+        // 生成中は対象 Project を途中変更させない（ボタン disable に加えた shared guard）。
+        if (_isGenerating || _isLoading)
+        {
+            return;
+        }
+
         if (ProjectGrid.SelectedItem is not ProjectSummary selected)
         {
             return;
@@ -245,14 +258,151 @@ public partial class ContentsView : UserControl
 
     private void UpdateButtons()
     {
-        var hasSelection = ProjectGrid.SelectedItem is ProjectSummary;
+        var selected = ProjectGrid.SelectedItem as ProjectSummary;
+        var hasSelection = selected is not null;
+        var idle = !_isLoading && !_isGenerating;
 
-        RefreshButton.IsEnabled = !_isLoading;
-        NewProjectButton.IsEnabled = !_isLoading;
-        EmptyNewProjectButton.IsEnabled = !_isLoading;
-        OpenButton.IsEnabled = !_isLoading && hasSelection;
-        RenameButton.IsEnabled = !_isLoading && hasSelection;
-        DeleteButton.IsEnabled = !_isLoading && hasSelection;
+        RefreshButton.IsEnabled = idle;
+        NewProjectButton.IsEnabled = idle;
+        EmptyNewProjectButton.IsEnabled = idle;
+        OpenButton.IsEnabled = idle && hasSelection;
+        RenameButton.IsEnabled = idle && hasSelection;
+        DeleteButton.IsEnabled = idle && hasSelection;
+
+        // 生成中は一覧そのものを止める（selection 変更・行ダブルクリックも含めて）。
+        ProjectGrid.IsEnabled = !_isGenerating;
+
+        // ここは convenience の事前確認。最終的な precondition は VideoGenerationCoordinator が authority。
+        GenerateButton.IsEnabled =
+            idle && selected is { StepCount: > 0, DurationMs: not null };
+        // 未選択時に「再生成」と出さない（selected が null のとき ?. 比較は false に落ちる）。
+        GenerateButton.Content = _isGenerating
+            ? "生成中..."
+            : selected is null || selected.VideoStatus == ArtifactGenerationState.Missing
+                ? "動画を生成"
+                : "動画を再生成";
+    }
+
+    // ---------------------------------------------------------------------
+    // Video Generate
+    // ---------------------------------------------------------------------
+
+    private async void Generate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isGenerating || _isLoading || ProjectGrid.SelectedItem is not ProjectSummary selected)
+        {
+            return;
+        }
+
+        // 対象 Project を capture する。生成中に selection が動いても追従しない。
+        var projectId = selected.Id;
+
+        _isGenerating = true;
+        UpdateButtons();
+        SetStatus("動画を生成しています...");
+
+        try
+        {
+            var result = await _videoGeneration.GenerateAsync(projectId);
+
+            // 一覧を作り直して VideoStatus を更新する（selection は LoadAsync が復元する）。
+            if (result.Status is VideoGenerationStatus.Generated
+                or VideoGenerationStatus.ProjectNotFound
+                or VideoGenerationStatus.SourceChanged)
+            {
+                await LoadAsync();
+            }
+
+            ApplyGenerationResult(result);
+        }
+        finally
+        {
+            // generation failure でも permanent busy にしない。
+            _isGenerating = false;
+            UpdateButtons();
+        }
+    }
+
+    /// <summary>
+    /// <see cref="VideoGenerationResult"/> を user-facing な status / dialog にする。
+    /// Exception.ToString() / stack trace は UI に出さない。
+    /// </summary>
+    private void ApplyGenerationResult(VideoGenerationResult result)
+    {
+        switch (result.Status)
+        {
+            case VideoGenerationStatus.Generated:
+                SetStatus("動画を生成しました。");
+                break;
+
+            case VideoGenerationStatus.ProjectNotFound:
+                SetStatus("プロジェクトが見つかりません。");
+                break;
+
+            case VideoGenerationStatus.RecordingMissing:
+                SetStatus("録画がありません。先に録画を作成してください。");
+                break;
+
+            case VideoGenerationStatus.StepsMissing:
+                SetStatus("手順がありません。動画を生成するには手順の確定が必要です。");
+                break;
+
+            case VideoGenerationStatus.SourceChanged:
+                SetStatus("生成中に内容が変更されました。最新の内容で再度生成してください。");
+                break;
+
+            case VideoGenerationStatus.ComposerUnavailable:
+                SetStatus("動画生成に必要な FFmpeg が見つかりません。");
+                ShowError(
+                    "動画生成に必要な FFmpeg が見つかりません。",
+                    result.ErrorMessage,
+                    MessageBoxImage.Error);
+                break;
+
+            default:
+                ApplyFailedResult(result);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 通常の failure と「手動 recovery が必要な failure」を分ける。
+    /// recovery 用 backup は UI 側から cleanup しない（自動削除もしない）。
+    /// </summary>
+    private void ApplyFailedResult(VideoGenerationResult result)
+    {
+        if (result.RecoveryDirectory is { } recoveryDirectory)
+        {
+            SetStatus("動画の保存に失敗しました。復旧用バックアップを保持しています。");
+
+            MessageBox.Show(
+                Window.GetWindow(this),
+                "動画の保存に失敗し、旧動画の自動復旧にも失敗しました。" + Environment.NewLine +
+                "復旧用バックアップを以下に保持しています。" + Environment.NewLine + Environment.NewLine +
+                recoveryDirectory + Environment.NewLine + Environment.NewLine +
+                "このフォルダーを削除しないでください。",
+                "動画の生成に失敗しました",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        SetStatus("動画の生成に失敗しました。");
+        ShowError("動画の生成に失敗しました。", result.ErrorMessage, MessageBoxImage.Error);
+    }
+
+    private void ShowError(string message, string? detail, MessageBoxImage icon)
+    {
+        var text = string.IsNullOrWhiteSpace(detail)
+            ? message
+            : message + Environment.NewLine + Environment.NewLine + detail;
+
+        MessageBox.Show(
+            Window.GetWindow(this),
+            text,
+            "エラー",
+            MessageBoxButton.OK,
+            icon);
     }
 
     // ---------------------------------------------------------------------

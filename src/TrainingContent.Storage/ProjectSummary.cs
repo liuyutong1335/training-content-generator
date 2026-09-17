@@ -29,12 +29,27 @@ public sealed class ProjectSummary
     public bool HasVideo { get; init; }
 
     /// <summary>
+    /// Video 成果物の 3 値 status。Contract §16 の <c>SourceRevision != Revision</c> → stale に従う。
+    /// <see cref="HasVideo"/> は互換のため残しているが、UI の判定はこちらを使う。
+    /// </summary>
+    public ArtifactGenerationState VideoStatus { get; init; }
+
+    /// <summary>
     /// TrainingProject から summary を作る。
     /// <paramref name="artifactExists"/> は Project 相対パスを受け取り、実ファイルの有無を返す。
     /// </summary>
     internal static ProjectSummary From(TrainingProject project, Func<string, bool> artifactExists)
     {
         var outputs = project.Outputs;
+
+        // Video は artifact が 1 つなので metadata と実ファイルと Revision だけで判定できる。
+        // SourceRevision > Revision の異常値も「一致しない」ので Stale になる。
+        var video = outputs.TrainingVideo;
+        var videoStatus = video is null || !artifactExists(video.Path)
+            ? ArtifactGenerationState.Missing
+            : video.SourceRevision == project.Revision
+                ? ArtifactGenerationState.Current
+                : ArtifactGenerationState.Stale;
 
         return new ProjectSummary
         {
@@ -47,7 +62,23 @@ public sealed class ProjectSummary
             HasManual =
                 (outputs.ManualMarkdown is { } md && artifactExists(md.Path)) ||
                 (outputs.ManualHtml is { } html && artifactExists(html.Path)),
-            HasVideo = outputs.TrainingVideo is { } video && artifactExists(video.Path),
+            HasVideo = videoStatus != ArtifactGenerationState.Missing,
+            VideoStatus = videoStatus,
         };
     }
+}
+
+/// <summary>
+/// 生成 artifact の状態。Shared Contract の型ではない（Storage 側の表示用）。
+/// </summary>
+public enum ArtifactGenerationState
+{
+    /// <summary>metadata が無い、または metadata はあるが実ファイルが無い。</summary>
+    Missing,
+
+    /// <summary>metadata と実ファイルがあり、<c>SourceRevision == Revision</c>。</summary>
+    Current,
+
+    /// <summary>metadata と実ファイルがあり、<c>SourceRevision != Revision</c>（要再生成）。</summary>
+    Stale,
 }

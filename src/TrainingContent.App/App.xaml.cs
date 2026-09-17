@@ -3,6 +3,7 @@ using TrainingContent.App.Services;
 using TrainingContent.App.State;
 using TrainingContent.Capture;
 using TrainingContent.Storage;
+using TrainingContent.Video.Renderer;
 
 namespace TrainingContent.App;
 
@@ -32,7 +33,20 @@ public partial class App : Application
         _recordingEngine = new ScreenRecorderRecordingEngine();
         var recordingCoordinator = new RecordingCoordinator(_recordingEngine, projectStore, currentProject);
 
-        var window = new MainWindow(projectStore, currentProject, workspace, recordingCoordinator);
+        // Video 生成 backend。transaction（staging / backup）は Storage 側が所有する。
+        var videoTransaction = new VideoArtifactTransaction(projectStore);
+
+        // composer は factory として渡すだけにし、ここでは生成しない。
+        // FfmpegVideoRenderer は生成時に ffmpeg.exe を探索して不在なら例外を投げるため、
+        // startup で実体を作ると FFmpeg 未導入の環境でアプリが起動できなくなる。
+        var videoGenerationCoordinator = new VideoGenerationCoordinator(
+            projectStore,
+            currentProject,
+            videoTransaction,
+            () => new FfmpegVideoRenderer());
+
+        var window = new MainWindow(
+            projectStore, currentProject, workspace, recordingCoordinator, videoGenerationCoordinator);
         MainWindow = window;
         window.Show();
     }
