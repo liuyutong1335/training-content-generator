@@ -18,6 +18,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Video", "sr
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Video.Tests", "tests\TrainingContent.Video.Tests\TrainingContent.Video.Tests.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Screenshot", "src\TrainingContent.Screenshot\TrainingContent.Screenshot.csproj", "{516BC64C-0A51-4EA3-B2E4-7AACE344799B}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Screenshot.Tests", "tests\TrainingContent.Screenshot.Tests\TrainingContent.Screenshot.Tests.csproj", "{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -56,6 +60,14 @@ Global
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}.Debug|x64.Build.0 = Debug|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}.Release|x64.ActiveCfg = Release|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}.Release|x64.Build.0 = Release|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Debug|x64.ActiveCfg = Debug|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Debug|x64.Build.0 = Debug|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Release|x64.ActiveCfg = Release|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Release|x64.Build.0 = Release|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Debug|x64.ActiveCfg = Debug|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Debug|x64.Build.0 = Debug|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Release|x64.ActiveCfg = Release|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
