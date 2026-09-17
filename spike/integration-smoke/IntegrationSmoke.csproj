@@ -6,7 +6,8 @@
        検証する項目（自動判定・約 12 秒で完了）:
          1. CaptureStarted 契機で session.Start() すると Event 0ms == MP4 0 秒になる
          2. Engine と Session の論理時間（Pause 除外）が一致する
-         3. events.jsonl が契約どおりの形式で出力される（recording.started/stopped） -->
+         3. events.jsonl が契約どおりの形式で出力される（seq 単調・started ts=0・stopped 最終行）
+         4. MP4 を実際に解析し、イベントタイムラインを覆う（監査 SP-5 対応） -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -19,6 +20,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\TrainingContent.Capture\TrainingContent.Capture.csproj" />
     <ProjectReference Include="..\..\src\TrainingContent.EventCapture\TrainingContent.EventCapture.csproj" />
+    <!-- MP4 実検査用（監査 SP-5 対応）。gate-a-check の Mp4Inspector をソースリンクで共用 -->
+    <Compile Include="..\gate-a-check\Mp4Inspector.cs" Link="Mp4Inspector.cs" />
   </ItemGroup>
 
 </Project>

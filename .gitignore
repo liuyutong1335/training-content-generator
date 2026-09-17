@@ -17,3 +17,6 @@ __pycache__/
 # OS
 Thumbs.db
 .DS_Store
+
+# ffmpeg binaries (fetch via tools/get-ffmpeg.ps1 - script only in git)
+tools/ffmpeg/

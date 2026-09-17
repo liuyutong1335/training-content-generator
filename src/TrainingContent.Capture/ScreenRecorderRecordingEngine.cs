@@ -230,6 +230,10 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         if (e.Status == RecorderStatus.Recording && !_captureStarted)
         {
             _captureStarted = true;
+            // 契約 §11: StartedAtUtc は Master Session Clock の起点 = Canonical 0ms。
+            // StartAsync 時刻（Record 呼び出し）のままにすると WGC 初期化ぶん ~1.5〜2.0s ずれるため、
+            // 実際の撮影開始瞬間で上書きする（監査 NEW-3 対応）
+            _startedAtUtc = DateTimeOffset.UtcNow;
             _clock.Restart();
             // Restart 前のクロック領域で記録された Pause 情報は Canonical Timeline の外
             // （WGC 初期化窓内の Pause → Resume で旧領域の区間が残る）ため、ここで破棄する

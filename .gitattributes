@@ -2,30 +2,38 @@
 # Line endings
 #
 # 目的:
+#   - リポジトリ内の text file の EOL を LF に統一する
 #   - 開発者ごとの core.autocrlf 設定差を吸収する
-#   - リポジトリ内の text file を LF に統一する
 #   - 不要な whole-file EOL diff を防ぐ
 #   - text fixture / script / docs 等の byte-level EOL を安定させる
 #
-# バイナリ（.mp4 等）はここで宣言しない。* text=auto を導入していないため、
-# 既存の git の自動判定に任せる。
+# バイナリは binary と明示して text normalization の対象外にする。
+# * text=auto は使わない（未知の file 種別に正規化を及ぼさないため）。
 # ---------------------------------------------------------------------
 
 # C# ソース / プロジェクト / ソリューション
-*.cs      text eol=lf
-*.csproj  text eol=lf
-*.sln     text eol=lf
+*.cs       text eol=lf
+*.csproj   text eol=lf
+*.sln      text eol=lf
 
 # WPF / ドキュメント / データ / 設定
-*.xaml    text eol=lf
-*.md      text eol=lf
-*.json    text eol=lf
-*.jsonl   text eol=lf
-*.toml    text eol=lf
+*.xaml     text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf
+*.jsonl    text eol=lf
+*.toml     text eol=lf
 
-# 補助スクリプト
-*.py      text eol=lf
-*.ps1     text eol=lf
+# 補助スクリプト / 字幕
+*.py       text eol=lf
+*.ps1      text eol=lf
+*.sh       text eol=lf
+*.ass      text eol=lf
 
+# repository metadata
 .gitattributes text eol=lf
 .gitignore     text eol=lf
+
+# バイナリ（text normalization の対象外）
+*.png      binary
+*.mp4      binary
+*.wav      binary

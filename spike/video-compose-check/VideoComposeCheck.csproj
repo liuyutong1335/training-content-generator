@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- R-05（動画生成）Spike 検証ツール — duty-a-progress の Spike A 同様の位置づけ。
+       使い方: tools/get-ffmpeg.ps1 で ffmpeg を取得後、プロジェクトとして実行。
+       検証する項目（各ステップで自動判定・全項目 PASS で完了）:
+         1. ffmpeg 合成（ASS 字幕焼き込み）がエラーなく完了する
+         2. 出力 MP4 の Duration が入力と一致する（±0.5s）
+         3. Step 区間のフレームに字幕が焼き込まれている（ソース同一時刻フレームとの画素差）
+         4. ASS ファイルに Step 数分の Dialogue 行がある -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+    <ProjectReference Include="..\..\src\TrainingContent.Video\TrainingContent.Video.csproj" />
+  </ItemGroup>
+
+</Project>
