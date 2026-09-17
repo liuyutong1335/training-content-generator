@@ -54,15 +54,31 @@ internal static class Program
 
         // ---- Step 2〜5: モジュール（FfmpegVideoRenderer）で合成 ----
         // 構成は契約 §20: Title Screen (3s) → 録画 10s → Ending (2s) = 計 15 秒
+        // 進捗報告（-progress pipe:1 の解析）もここで実機検証する
         var output = Path.Combine(workDir, "training_video.mp4");
-        var result = renderer.ComposeAsync(new VideoCompositionRequest
-        {
-            RecordingPath = source,
-            OutputPath = output,
-            Project = project,
-        }).GetAwaiter().GetResult();
+        var reportedProgress = new List<double>();
+        var result = renderer.ComposeAsync(
+            new VideoCompositionRequest
+            {
+                RecordingPath = source,
+                OutputPath = output,
+                Project = project,
+            },
+            new VideoCompositionOptions
+            {
+                Progress = new Progress<VideoCompositionProgress>(p =>
+                {
+                    lock (reportedProgress)
+                    {
+                        reportedProgress.Add(p.OverallProgress);
+                        Console.WriteLine($"    進捗 {p.OverallProgress,5:P1}  [{p.Stage}] {p.StageDetail}");
+                    }
+                }),
+            }).GetAwaiter().GetResult();
 
         Check(2, "モジュールによる合成がエラーなく完了", File.Exists(output) && new FileInfo(output).Length > 0);
+        var progressCovered = reportedProgress.Count >= 3 && reportedProgress.First() < 0.1 && reportedProgress.Last() >= 0.99;
+        Check(5, $"進捗報告が単調に 0→100% をカバー（報告 {reportedProgress.Count} 回）", progressCovered);
 
         // ---- Duration 一致（Title 3s + 録画 10s + Ending 2s = 15s ± 0.5s・ffprobe 実測）----
         Check(3, $"Duration 一致（出力 {result.DurationSeconds:F2}s / 期待 15.00s）", Math.Abs(result.DurationSeconds - 15.0) <= 0.5);
@@ -77,7 +93,7 @@ internal static class Program
         Check(4, $"Step 区間フレームの画素差 {diffRatio:P2}（字幕焼き込み確認）", diffRatio > 0.01);
 
         Console.WriteLine(_failCount == 0
-            ? "\n全 4 項目 PASS — R-05 MVP（契約 §20 構成・FFmpeg + ASS 焼き込み）はモジュールとして成立"
+            ? "\n全 5 項目 PASS — R-05 MVP（契約 §20 構成・FFmpeg + ASS 焼き込み・進捗報告）はモジュールとして成立"
             : $"\n{_failCount} 項目 NG");
         return _failCount == 0 ? 0 : 1;
     }

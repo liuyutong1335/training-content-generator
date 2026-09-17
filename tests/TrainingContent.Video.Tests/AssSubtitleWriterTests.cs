@@ -73,4 +73,11 @@ public class AssSubtitleWriterTests
         var dialogue = card.Split('\n').Single(l => l.StartsWith("Dialogue:"));
         Assert.StartsWith("Dialogue: 0,0:00:00.000,0:00:03.000,Card", dialogue);
     }
+
+    [Fact]
+    public void Card_はフェードインアウトを持つ()
+    {
+        var card = AssSubtitleWriter.WriteCard("タイトル", 3.0);
+        Assert.Contains("{\\fad(300,300)}", card, StringComparison.Ordinal);
+    }
 }

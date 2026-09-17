@@ -51,7 +51,38 @@ public sealed record VideoCompositionOptions
 
     /// <summary>エンコーダ。既定は LGPL 版 ffmpeg に含まれる libopenh264。</summary>
     public string Encoder { get; init; } = "libopenh264";
+
+    /// <summary>合成進捗の報告先。未指定なら報告しない。OverallProgress は 0.0〜1.0（単調増加）。</summary>
+    public IProgress<VideoCompositionProgress>? Progress { get; init; }
 }
+
+/// <summary>合成処理の段階。</summary>
+public enum VideoCompositionStage
+{
+    /// <summary>入力録画の解析（ffprobe）。</summary>
+    AnalyzingInput,
+
+    /// <summary>Step 字幕の焼き込み（録画を再エンコード）。</summary>
+    BurningSubtitles,
+
+    /// <summary>Title Screen の生成。</summary>
+    RenderingTitle,
+
+    /// <summary>Ending の生成。</summary>
+    RenderingEnding,
+
+    /// <summary>Title / 本編 / Ending の結合（再エンコード）。</summary>
+    Concatenating,
+
+    /// <summary>出力 MP4 の検証（ffprobe で Duration 実測）。</summary>
+    Finalizing,
+}
+
+/// <summary>合成進捗。OverallProgress は 0.0〜1.0 で単調増加する（D の UI 表示用）。</summary>
+public sealed record VideoCompositionProgress(
+    VideoCompositionStage Stage,
+    string StageDetail,
+    double OverallProgress);
 
 /// <summary>合成結果。DurationSeconds は出力 MP4 の実測値（ffprobe）。</summary>
 public sealed record VideoCompositionResult(string OutputPath, double DurationSeconds);

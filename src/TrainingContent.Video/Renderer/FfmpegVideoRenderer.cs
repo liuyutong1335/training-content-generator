@@ -42,9 +42,11 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
         var workDir = Directory.CreateTempSubdirectory("tcs-video-").FullName;
         try
         {
-            // 出力サイズ/fps は録画に合わせる（concat の一致要件）
+            // ---- 0. 入力解析: 出力サイズ/fps は録画に合わせる（concat の一致要件）----
+            Report(options, VideoCompositionStage.AnalyzingInput, "録画を解析しています…", 0.0);
             var source = ProbeVideoInfo(request.RecordingPath);
             var (w, h, fps) = source;
+            var sourceSeconds = ProbeDurationSeconds(request.RecordingPath);
 
             // ---- 1. メイン: Step 字幕の焼き込み（Canonical Timeline のまま = シフト不要）----
             var intervals = StepTimelineBuilder.Build(
@@ -58,6 +60,8 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             await RunAsync(
                 $"-y -i \"{request.RecordingPath}\" -vf \"ass=steps.ass\" -c:v {options.Encoder} -pix_fmt yuv420p -c:a copy \"{main}\"",
                 workDir,
+                new RunProgressContext(VideoCompositionStage.BurningSubtitles, "Step 字幕を焼き込んでいます…", BaseProgress.BurningSubtitles, BaseProgress.RenderingTitle - BaseProgress.BurningSubtitles, sourceSeconds),
+                options,
                 cancellationToken);
 
             // ---- 2. Title Screen / Ending（契約 §20）----
@@ -72,9 +76,13 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             await RunAsync(
                 $"-y -f concat -safe 0 -i \"{listPath}\" -c:v {options.Encoder} -pix_fmt yuv420p -c:a aac \"{request.OutputPath}\"",
                 workDir,
+                new RunProgressContext(VideoCompositionStage.Concatenating, "動画を結合しています…", BaseProgress.Concatenating, BaseProgress.Finalizing - BaseProgress.Concatenating, sourceSeconds + options.TitleSeconds + options.EndingSeconds),
+                options,
                 cancellationToken);
 
+            Report(options, VideoCompositionStage.Finalizing, "出力を確認しています…", BaseProgress.Finalizing);
             var duration = ProbeDurationSeconds(request.OutputPath);
+            Report(options, VideoCompositionStage.Finalizing, "完了", 1.0);
             return new VideoCompositionResult(request.OutputPath, duration);
         }
         finally
@@ -86,6 +94,13 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
     private async Task<string> RenderCardAsync(
         string text, double seconds, int w, int h, string fps, VideoCompositionOptions options, string workDir, string name, CancellationToken ct)
     {
+        var stage = name == "title" ? VideoCompositionStage.RenderingTitle : VideoCompositionStage.RenderingEnding;
+        var detail = stage == VideoCompositionStage.RenderingTitle ? "Title Screen を生成しています…" : "Ending を生成しています…";
+        var baseProgress = stage == VideoCompositionStage.RenderingTitle ? BaseProgress.RenderingTitle : BaseProgress.RenderingEnding;
+        var weight = stage == VideoCompositionStage.RenderingTitle
+            ? BaseProgress.RenderingEnding - BaseProgress.RenderingTitle
+            : BaseProgress.Concatenating - BaseProgress.RenderingEnding;
+
         var ass = Path.Combine(workDir, $"{name}.ass");
         File.WriteAllText(ass, AssSubtitleWriter.WriteCard(text, seconds, w, h), new System.Text.UTF8Encoding(false));
         var output = Path.Combine(workDir, $"{name}.mp4");
@@ -95,6 +110,8 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             $"-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -shortest " +
             $"-vf \"ass={name}.ass\" -c:v {options.Encoder} -pix_fmt yuv420p -c:a aac \"{output}\"",
             workDir,
+            new RunProgressContext(stage, detail, baseProgress, weight, seconds),
+            options,
             ct);
         return output;
     }
@@ -133,16 +150,74 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
         return double.Parse(text);
     }
 
-    private async Task RunAsync(string arguments, string workingDir, CancellationToken ct)
+    /// <summary>ffmpeg 実行 1 回分の進捗定義（段階の全体進捗での位置とウェイト・想定処理秒）。</summary>
+    private sealed record RunProgressContext(
+        VideoCompositionStage Stage,
+        string Detail,
+        double BaseProgress,
+        double Weight,
+        double? ExpectedSeconds);
+
+    /// <summary>全体進捗での段階境界（0.0〜1.0）。合計 = 1.0。Subtitle 焼き込みと結合が時間の大半を占める。</summary>
+    private static class BaseProgress
     {
-        var psi = new ProcessStartInfo(_ffmpegPath, arguments)
+        public const double AnalyzingInput = 0.00;
+        public const double BurningSubtitles = 0.02;
+        public const double RenderingTitle = 0.47;
+        public const double RenderingEnding = 0.51;
+        public const double Concatenating = 0.54;
+        public const double Finalizing = 0.99;
+    }
+
+    private static void Report(VideoCompositionOptions options, VideoCompositionStage stage, string detail, double overall)
+    {
+        options.Progress?.Report(new VideoCompositionProgress(stage, detail, Math.Clamp(overall, 0.0, 1.0)));
+    }
+
+    private async Task RunAsync(string arguments, string workingDir, RunProgressContext progress, VideoCompositionOptions options, CancellationToken ct)
+    {
+        // -progress pipe:1 で stdout に進捗（key=value 行）を出させ、全体進捗へ写像する
+        var psi = new ProcessStartInfo(_ffmpegPath, $"-progress pipe:1 -nostats {arguments}")
         {
             UseShellExecute = false,
             WorkingDirectory = workingDir,
             CreateNoWindow = true,
+            RedirectStandardOutput = true,
         };
         using var p = Process.Start(psi)!;
-        await p.WaitForExitAsync(ct);
+
+        var parser = new FfmpegProgressParser();
+        var lastReportedPercent = -1;
+        var readTask = Task.Run(async () =>
+        {
+            while (await p.StandardOutput.ReadLineAsync() is { } line)
+            {
+                parser.Feed(line);
+                if (progress.ExpectedSeconds is { } expected && expected > 0 && parser.OutTimeSeconds is { } seconds && options.Progress is not null)
+                {
+                    var overall = progress.BaseProgress + progress.Weight * Math.Clamp(seconds / expected, 0.0, 1.0);
+                    var percent = (int)(overall * 100);
+                    if (percent > lastReportedPercent)
+                    {
+                        lastReportedPercent = percent;
+                        Report(options, progress.Stage, progress.Detail, overall);
+                    }
+                }
+            }
+        });
+
+        try
+        {
+            await p.WaitForExitAsync(ct);
+            await readTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // キャンセル時は ffmpeg を残さず終了させる（ゾンビプロセスが temp を握り続けるのを防ぐ）
+            try { p.Kill(entireProcessTree: true); } catch { /* 既に終了している場合 */ }
+            throw;
+        }
+
         if (p.ExitCode != 0)
         {
             throw new InvalidOperationException($"ffmpeg が失敗しました (exit {p.ExitCode}): {arguments[..Math.Min(120, arguments.Length)]}…");
