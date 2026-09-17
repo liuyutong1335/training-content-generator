@@ -55,6 +55,18 @@ public sealed class RecordingCoordinator
     private RecordingOptions? _sessionOptions;
     private bool _isCommandRunning;
 
+    /// <summary>
+    /// 正常 Stop の finalization（EventCapture 停止 → Dispose → 保存）が進行中か。
+    ///
+    /// <para>
+    /// EventCapture の停止は background で実行されるため、Engine が先に Idle を通知しても
+    /// まだ停止処理が動いている時間帯がある。その間に navigation / window close /
+    /// 新規 recording が通らないよう、<see cref="IsSessionActive"/> へ含めて lock を維持する。
+    /// <see cref="RecordingState"/> の mirror とは独立に、この停止処理の間だけ立つ。
+    /// </para>
+    /// </summary>
+    private volatile bool _isStopFinalizing;
+
     // IRecordingEngine は State を公開していない（具象 Engine のみ）。境界は interface に保つため、
     // StateChanged から受け取った状態をここで保持する。Engine を動かすのは本 Coordinator だけなので
     // この mirror が唯一の状態源になる。
@@ -116,9 +128,16 @@ public sealed class RecordingCoordinator
 
     /// <summary>
     /// 録画 session が進行中か。Navigation lock（§26）と Window close 拒否（§27）の判定に使う。
+    ///
+    /// <para>
+    /// <see cref="_isStopFinalizing"/> を含めるのは、Engine が Idle へ遷移した後も
+    /// EventCapture の停止と保存が background で続くため。Engine の State だけを見ると
+    /// その窓で lock が外れてしまう。
+    /// </para>
     /// </summary>
     public bool IsSessionActive =>
-        _state is RecordingState.Recording or RecordingState.Paused or RecordingState.Stopping;
+        _state is RecordingState.Recording or RecordingState.Paused or RecordingState.Stopping
+        || _isStopFinalizing;
 
     /// <summary>session 開始時に固定した Project ID（録画中以外は null）。</summary>
     public Guid? SessionProjectId => _sessionProjectId;
@@ -372,12 +391,19 @@ public sealed class RecordingCoordinator
     /// </summary>
     public async Task<RecordingStopOutcome> StopAsync()
     {
-        if (!IsSessionActive)
+        // finalization 中は IsSessionActive が true のままなので、Stop の多重実行はここで弾く
+        // （2 本目の Stop が Engine と session を二重に触らないようにする）。
+        if (_isStopFinalizing || !IsSessionActive)
         {
             return RecordingStopOutcome.Failure(RecordingStopStatus.NotRecording, "録画中ではありません。");
         }
 
         _isCommandRunning = true;
+
+        // Engine が Idle を通知しても finalization が終わるまで session lock を維持する。
+        // MainWindow の navigation lock / close 拒否は IsSessionActive を見ているため、
+        // 両 flag を立ててから ActivityChanged を通知する。
+        _isStopFinalizing = true;
         ActivityChanged?.Invoke(this, EventArgs.Empty);
 
         try
@@ -398,7 +424,26 @@ public sealed class RecordingCoordinator
                     "録画エンジンでエラーが発生しました。アプリを再起動して再試行してください。");
             }
 
-            var eventDurationMs = StopEventCapture();
+            // EventCapture の停止と Dispose は hook thread / worker thread の Join と queue drain を
+            // 含み、明示的な Join だけで最大 20 秒規模になりうる。UI thread を block しないよう
+            // background へ移す。fire-and-forget にせず必ず await する。
+            // ownership の取得と Coordinator state の更新は UI thread 側に閉じる
+            // （background から field を直接触らない）。
+            var session = TakeOperationSession();
+            var captureReady = _captureReady;
+            var alreadyFaulted = _eventCaptureFaulted;
+
+            var stopResult = await Task
+                .Run(() => StopEventCaptureCore(session, captureReady, alreadyFaulted))
+                .ConfigureAwait(true);
+
+            // background が返した immutable な結果を、UI thread 側で公開する。
+            if (stopResult.Faulted)
+            {
+                MarkEventCaptureFaulted(stopResult.FaultMessage);
+            }
+
+            var eventDurationMs = stopResult.DurationMs;
 
             // Engine と EventCapture の論理時間を比較する（統合の成立確認）。
             // 差が大きくても recording は捨てない（契約違反として即破棄はしない）。
@@ -482,52 +527,73 @@ public sealed class RecordingCoordinator
         finally
         {
             ResetSessionState();
+            _isStopFinalizing = false;
             _isCommandRunning = false;
             ActivityChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
     /// <summary>
-    /// EventCapture を停止して論理 Duration を返す。Dispose まで行い hook / thread を残さない。
-    /// 失敗しても例外は投げず fault として記録する。
+    /// <see cref="StopEventCaptureCore"/> の結果。background thread から UI thread へ渡すため
+    /// immutable にする（Coordinator の field は含めない）。
     /// </summary>
-    private long? StopEventCapture()
+    /// <param name="DurationMs">EventCapture 側の論理 Duration。取得できなければ null。</param>
+    /// <param name="Faulted">EventCapture fault として記録すべきか。</param>
+    /// <param name="FaultMessage">fault のユーザー向け message。null なら既定 message を使う。</param>
+    private sealed record EventCaptureStopResult(long? DurationMs, bool Faulted, string? FaultMessage);
+
+    /// <summary>
+    /// EventCapture session を停止して Dispose する。Dispose まで行い hook / thread を残さない。
+    ///
+    /// <para>
+    /// hook thread / worker thread の Join と queue drain を含むため UI thread では実行しない。
+    /// 呼出元（<see cref="StopAsync"/>）が Task.Run で background へ渡す。
+    /// </para>
+    /// <para>
+    /// Coordinator の field は一切触らない。session の所有権取得（<see cref="TakeOperationSession"/>）は
+    /// 呼出元の UI thread で済ませ、ここへは引数として渡す。失敗しても例外は投げず、
+    /// fault として結果に載せて返す。
+    /// </para>
+    /// </summary>
+    private static EventCaptureStopResult StopEventCaptureCore(
+        OperationCaptureSession? session,
+        bool captureReady,
+        bool alreadyFaulted)
     {
-        // この経路が session の Dispose 責任を取得する（他経路と二重取得しない）。
-        var session = TakeOperationSession();
         if (session is null)
         {
             // integrated recording では EventCapture session の不在 = 正常な recording ではない。
             // 内部不整合で session が消えていても成功扱いで保存しないよう fault として記録する。
             Trace.TraceError(
                 "RecordingCoordinator: EventCapture session が存在しないため integrated recording として扱いません。");
-            MarkEventCaptureFaulted();
-            return null;
+            return new EventCaptureStopResult(null, true, null);
         }
 
-        long? eventDurationMs = null;
+        long? durationMs = null;
+        var faulted = false;
 
-        if (_captureReady)
+        if (captureReady)
         {
             try
             {
-                eventDurationMs = session.Stop();
+                durationMs = session.Stop();
             }
             catch (Exception ex)
             {
                 Trace.TraceError("RecordingCoordinator: 操作記録の停止に失敗しました — {0}", ex);
-                MarkEventCaptureFaulted();
+                faulted = true;
             }
         }
-        else if (!_eventCaptureFaulted)
+        else if (!alreadyFaulted)
         {
             // CaptureStarted が来ないまま停止された = 操作記録が 1 件も取れていない。
             Trace.TraceWarning("RecordingCoordinator: 操作記録が開始されないまま録画が停止されました。");
-            MarkEventCaptureFaulted();
+            faulted = true;
         }
 
+        // 停止に失敗しても Dispose は必ず行う（hook / thread を残さない）。
         DisposeSessionQuietly(session, "stop");
-        return eventDurationMs;
+        return new EventCaptureStopResult(durationMs, faulted, null);
     }
 
     /// <summary>
@@ -586,10 +652,15 @@ public sealed class RecordingCoordinator
         Task.Run(() => DisposeSessionQuietly(session, reason));
     }
 
-    private void MarkEventCaptureFaulted()
+    /// <summary>
+    /// EventCapture fault を記録する。既に fault が成立している場合は message を上書きしない
+    /// （最初に検出した原因をユーザーへ見せる）。
+    /// </summary>
+    /// <param name="message">fault のユーザー向け message。null なら既定 message を使う。</param>
+    private void MarkEventCaptureFaulted(string? message = null)
     {
         _eventCaptureFaulted = true;
-        _eventCaptureFaultMessage ??= EventCaptureFaultedUserMessage;
+        _eventCaptureFaultMessage ??= message ?? EventCaptureFaultedUserMessage;
     }
 
     /// <summary>
