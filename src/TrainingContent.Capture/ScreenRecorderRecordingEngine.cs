@@ -137,6 +137,20 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
 
     private RecordingResult BuildResult(string filePath)
     {
+        // CaptureStarted 前に停止された場合（WGC 初期化の ~2 秒窓・2 回目の StartAsync 直後など）、
+        // Canonical Timeline はまだ始まっていない。_clock はエンジン構築時から走っているため
+        // 生の Elapsed を返すと実録時間より大幅に大きくなる → Duration は 0 を返す
+        if (!_captureStarted)
+        {
+            return new RecordingResult
+            {
+                FilePath = filePath,
+                Duration = TimeSpan.Zero,
+                StartedAtUtc = _startedAtUtc,
+                PauseIntervals = [],
+            };
+        }
+
         return new RecordingResult
         {
             FilePath = filePath,
@@ -216,7 +230,15 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         if (e.Status == RecorderStatus.Recording && !_captureStarted)
         {
             _captureStarted = true;
+            // 契約 §11: StartedAtUtc は Master Session Clock の起点 = Canonical 0ms。
+            // StartAsync 時刻（Record 呼び出し）のままにすると WGC 初期化ぶん ~1.5〜2.0s ずれるため、
+            // 実際の撮影開始瞬間で上書きする（監査 NEW-3 対応）
+            _startedAtUtc = DateTimeOffset.UtcNow;
             _clock.Restart();
+            // Restart 前のクロック領域で記録された Pause 情報は Canonical Timeline の外
+            // （WGC 初期化窓内の Pause → Resume で旧領域の区間が残る）ため、ここで破棄する
+            _pauseIntervals.Clear();
+            _pauseStartedAt = null;
             // 統合メモ §1: B の EventCapture Session はこの瞬間に開始して
             // Canonical 0ms == MP4 の 0 秒に合わせる（README「A との時間同期」）
             CaptureStarted?.Invoke(this, EventArgs.Empty);

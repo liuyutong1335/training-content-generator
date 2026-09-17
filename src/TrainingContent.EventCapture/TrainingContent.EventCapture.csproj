@@ -11,4 +11,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- OperationCaptureSession のスレッド後片付けを検証するテスト用（D5-B 統合テスト指摘対応） -->
+    <InternalsVisibleTo Include="TrainingContent.EventCapture.Tests" />
+  </ItemGroup>
+
 </Project>

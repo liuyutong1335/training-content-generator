@@ -1,0 +1,15 @@
+# 監査 §06 対策: core.autocrlf=true の Windows チェックアウトでテスト期待値が
+# CRLF になり Writer の LF 出力と不一致する事故を防ぐ。テキストは LF で正規化する。
+* text=auto
+*.cs text eol=lf
+*.csproj text eol=lf
+*.sln text eol=crlf
+*.md text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.ass text eol=lf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.png binary
+*.mp4 binary
+*.wav binary

@@ -1,7 +1,7 @@
-# 担当 A（Recording Engine）作業ログ・進捗
+﻿# 担当 A（Recording Engine）作業ログ・進捗
 
 - 担当: Liu Yutong
-- 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）
+- 担当領域: `src/TrainingContent.Capture/`（開発計画書 v0.2 §24）+ `src/TrainingContent.Video/`（R-05・2026-09-16 にリーダー判断で A 担当に）
 - 作業ブランチ: `feature/capture`
 - **2026-09-14: ✅ GATE A 確定 — Spike A 完了。** 自動検証（10 分録画含む）全 PASS + 手動確認（音ズレ / seek / 各音声 / アプリ切替）もユーザーが確認済み。
 - 本書の読み方: 同僚および同僚の AI は、A の実装状況を確認する際に本書を読む。契約事項は `docs/phase0-contract.md`（FROZEN）が優先。本書は進捗・知見・未決事項の記録。
@@ -10,7 +10,7 @@
 
 ## 1. 現在の進捗（2026-09-14 時点）
 
-> 更新: **Gate A 完了** — 自動検証（10 分録画含む）+ 手動確認すべて PASS。**Phase 2（B の EventCapture との統合）着手**。最初の対応として B から要望のあった `CaptureStarted` イベントを実装（§7）。
+> 更新: **Gate A 完了** — 自動検証（10 分録画含む）+ 手動確認すべて PASS。**Phase 2（B の EventCapture との統合）着手**。最初の対応として B から要望のあった `CaptureStarted` イベントを実装（§7）。**2026-09-16: D の WPF UI（`feature/WPF-integration`）が `CaptureStarted` 同期手順を実装済みのことを確認 — A 側のコード変更は不要（§5-2）。**
 
 | Phase | 項目 | 状態 |
 |---|---|---|
@@ -76,6 +76,15 @@ new RecordingResult {
 8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.9s 以内を確認済み
 9. **v7.0.1 は音声系が Breaking Change**: `GetSystemAudioDevices(source)` 廃止（`GetSystemAudioCaptureDevices` / `GetSystemAudioLoopbackDevices` に分離）、`AudioInputDevice`/`AudioOutputDevice` 廃止 → `AudioSources` リスト（`CaptureAudioSource` / `LoopbackAudioSource` / `ProcessAudioSource`）に一本化。`OnAudioPacketRecorded` イベント追加（将来の音ズレ検証・STT に有用）。`IRecordingEngine` 抽象は影響なし（実装差し替えで吸収可能）
 10. **v7.0.1 実録比較の結論**: 初回測定で「mp4 が論理時間より 3.2s 短い異常」に見えたが、**比較スクリプト側の測定ミス**（Pause 減算漏れ）で、修正後は v6.6.0 と同等（差 0.7s 以内）だった。faststart は v7 でも効かず（両バージョン共通の制約）。v7 は音声系 API の Breaking Change のみが実質的な移行コスト。→ **MVP は v6.6.0（実績あり・契約整合済み）を推奨、v7 への移行は低リスト**。検証ツール: `spike/v7-comparison/`
+11. **CaptureStarted 前の Stop で Duration が巨大になるバグ（2026-09-16 修正・D 側レビューで指摘）**: `_clock` はエンジン構築時に StartNew されるため、WGC 初期化の ~2 秒窓内（および同一インスタンスの 2 回目 `StartAsync` 直後）に `StopAsync` すると `CanonicalDuration()` の起点が実撮影開始より前になり、実録時間より大幅に大きい値を返していた。**修正**: `BuildResult` で `_captureStarted == false` の場合は `Duration = TimeSpan.Zero`・`PauseIntervals = []` を返す。併せて CaptureStarted 時点で旧クロック領域の Pause 情報を破棄（WGC 窓内 Pause → Resume の区間が残るため）。統合アプリでは Coordinator が `!_captureReady` を fault 扱いするため影響なし・単独利用（ツール類）時のみ顕在化。ユニットテスト不可（完了イベントが実録依存のため）— 実機再現は `spike/capture-started-check/` で継続確認
+12. **要件カバレッジ監査（2026-09-16）への対応 — A の検証ツールの判定強化**: 監査 §07 SP 系の指摘に対し以下を修正した。
+    - **NEW-3**（CONFIRMED）: `StartedAtUtc` が `StartAsync` 時刻のままで実撮影開始と ~1.5〜2.0s 離れていた → CaptureStarted 瞬間で上書きするよう修正（契約 §11 の「Master Session Clock の起点」どおり）
+    - **SP-1**: `--full`（10 分録画）なしでは「GATE A: PASS」「完了条件を満たしました」を表示しないように変更（標準モードの全 PASS は「完了判定は行いません（--full で再実行）」と明示）
+    - **SP-2**: Engine 論理 Duration と MP4 の一致判定に加え、**CaptureStarted → Stop 完了の実撮影経過**（Pause 分を除く wall 実測）と MP4 を突き合わせるチェックを追加（±1.5 秒）。両者が同方向にずれるだけでは検出できなかった原点ズレ系を拾う
+    - **SP-3**: 音声はトラック存在確認のみだったため、ffmpeg（`tools/get-ffmpeg.ps1` で取得、無ければ WARN 扱いでスキップ）の `volumedetect` による無音検査（mean_volume > -50dB）を追加
+    - **SP-4**: integration-smoke の events 検査を「type 2 種の存在確認」から、**seq 単調増加（§8.1）・started timestampMs=0（§20）・stopped が最終行（§20）**の検証に強化
+    - **SP-5**: integration-smoke が MP4 を一度も開いていなかった問題 → `Mp4Inspector`（gate-a-check からソース共有）で MP4 を実際に解析し、「Duration が Engine 論理値と ±1s」「最終イベント時刻を覆う」を判定
+    - **未解決の注記**: 原点（0ms 対応）の frame-level 検証は自動化できておらず、G2 の差 146ms の原因・安定性も未証明のまま（監査指摘どおり）。テストスイートの内訳は本書 §4 の「16/16」は **main 構成（Core 13 + Capture 3）** の値であり、WPF ブランチ構成では 69/69（監査 §08 の記載どおり）。R-05（動画生成）は A 担当として FFmpeg + ASS 方式で spike 着手（`spike/video-compose-check/`）
 
 ## 4. テスト状況
 
@@ -92,6 +101,7 @@ new RecordingResult {
    - ✅ **実機検証済み（2026-09-15・`spike/capture-started-check/`）**: StateChanged(Recording) 215ms → CaptureStarted 1485ms（撮影開始まで 1.3 秒）・Pause/Resume 挟んで発火 1 回・論理 Duration は Pause 除外を確認。全 4 項目 PASS
 2. **統合メモ §1（Master Clock の帰属）**: B の MasterClock を正とする案を受け入れを記載 — `docs/integration-notes.md` §1
    - 残タスク: 例会で B・D の合意を取り、D が Record UI に同期手順を実装する
+   - ✅ **D 側の実装を確認（2026-09-16・`feature/WPF-integration`）**: D の `RecordingCoordinator` が B README 推奨手順どおり `CaptureStarted` 契機で `session.Start()` を実装済み（`session.Start()` 完了まで UI は「録画準備中」として区別）。実装レベルでは B の MasterClock 正とする案と整合。例会での正式合意のみ残す
 3. ✅ **A+B 統合スモークテスト実機 PASS（2026-09-15・`spike/integration-smoke/`）**
    - B README 推奨手順（`CaptureStarted` 契機で `session.Start()`）を実際に実行
    - Engine 論理 5059ms vs Session 論理 4913ms（**差 146ms**・許容 ±500ms 内）
@@ -101,7 +111,7 @@ new RecordingResult {
 
 ## 6. 未決事項・相談
 
-1. **Master Clock の帰属**（B と）— `docs/integration-notes.md` §1
+1. **Master Clock の帰属**（B と）— `docs/integration-notes.md` §1 — **実装レベルでは解決**（D の `feature/WPF-integration` が B README 手順どおり実装・§5-2 参照）。例会での正式合意を残すのみ
 2. **Screenshot サービスの帰属**（B・C と）— 同 §2
 3. 複数モニター環境での個別ディスプレイ録画指定（コード内 TODO(Spike A)・単一モニター環境では未検証）
 4. v7.0.1 への移行タイミング（音声パイプライン再設計時・知見 9・10）
@@ -129,3 +139,24 @@ spike\capture-started-check\bin\x64\Debug\net8.0-windows\win-x64\CaptureStartedC
 # A+B 統合スモークテスト（Engine + OperationCaptureSession・約 12 秒・自動判定）
 spike\integration-smoke\bin\x64\Debug\net8.0-windows\win-x64\IntegrationSmoke.exe
 ```
+
+---
+
+## 8. R-05（動画生成）作業記録（2026-09-16・担当変更で A に）
+
+- **方式の決定**: FFmpeg + ASS 字幕焼き込み（`spike/video-compose-check/` で実証・全 4 項目 PASS）。
+  監査 Blocker #1 が求めていた「C# での合成方式の選定」はこれで確定。エンコーダは libopenh264（LGPL ビルドに libx264 は無い）。
+- **モジュール実装**（開発計画書 §12 の 4 領域のうち Timeline / Subtitle / Renderer を実装・Overlay は将来拡張）:
+  - `Timeline/StepTimelineBuilder.cs` — TrainingStep[] → 表示区間（契約 §14: EndMs=null は次 Step 開始まで・最終は +4s・Duration にクランプ）
+  - `Subtitle/AssSubtitleWriter.cs` — ASS 生成（pure logic・単体テスト 16 本）
+  - `Renderer/FfmpegVideoRenderer.cs` — 契約 §20 構成（Title Screen → 字幕焼き込み録画 → Ending）の ffmpeg 実行
+  - `IVideoComposer.cs` — D の ContentsView「再生成」用の窓口。出力は契約 §17 の output/training_video.mp4
+- **実装上の知見**:
+  - ASS の `Format:` 行は `Dialogue` の 10 フィールドと一致させること（5 フィールドで書くと余剰フィールドがテキストとして描画される。spike のフレーム目視で発見）
+  - ass フィルタの引数に絶対パスを渡せない（ドライブ文字 `:` がフィルタオプション区切りに解析される）→ 作業ディレクトリを指定して相対パスで渡す
+  - xunit の `Assert.DoesNotContain`（文字列）は**文化依存比較**で、ja 環境では全角 `｛` と半角 `{` が同値扱いされる → 波括弧エスケープの検証は ordinal 比較で行う
+  - concat は音声パラメータ不一致（録画側 AAC と anullsrc）で壊れ得るため再エンコードで繋ぐ
+- **テスト**: `dotnet test` 32/32 合格（Core 13 + Capture 3 + Video 16）。実機検証は `spike/video-compose-check/`（Title/Ending 込み 15 秒出力の ffprobe 実測 + フレーム画素差で字幕焼き込みを証明）
+- **未解決**: O-01（無操作区間の自動短縮）は Post-MVP。TTS は v0.5 以降。sln 登録済み（Video / Video.Tests）。実装分は **PR #10**（PR #9 は spike のみ先行マージ）。main 取込み済み（2026-09-16）
+  例会事項: README 構成図の owner 表記修正（Video を A に）・開発計画書 §24 への Video Generator 追記・§8 OSS 一覧への FFmpeg 追加と THIRD_PARTY_NOTICES.md への記載
+

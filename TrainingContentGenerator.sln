@@ -14,6 +14,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Manual", "s
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Manual.Tests", "tests\TrainingContent.Manual.Tests\TrainingContent.Manual.Tests.csproj", "{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Video", "src\TrainingContent.Video\TrainingContent.Video.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Video.Tests", "tests\TrainingContent.Video.Tests\TrainingContent.Video.Tests.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -44,6 +48,14 @@ Global
 		{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}.Debug|x64.Build.0 = Debug|x64
 		{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}.Release|x64.ActiveCfg = Release|x64
 		{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}.Release|x64.Build.0 = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}.Debug|x64.ActiveCfg = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}.Debug|x64.Build.0 = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}.Release|x64.ActiveCfg = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}.Release|x64.Build.0 = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}.Debug|x64.ActiveCfg = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}.Debug|x64.Build.0 = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}.Release|x64.ActiveCfg = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

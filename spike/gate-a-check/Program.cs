@@ -93,15 +93,16 @@ var manualOk = manualChecks.All(c => c.Passed == true);
 var pending = manualChecks.Any(c => c.Passed is null);
 Console.WriteLine($"自動チェック : {(autoOk ? "PASS ✅" : "FAIL ❌")}");
 Console.WriteLine($"手動チェック : {(pending ? "要確認 ⚠（対話で回答すると確定します）" : manualOk ? "PASS ✅" : "FAIL ❌")}");
-if (autoOk && manualOk)
+if (autoOk && manualOk && fullMode)
 {
     Console.WriteLine();
-    Console.WriteLine("GATE A: PASS ✅ — Recording Spike の完了条件を満たしました");
+    Console.WriteLine("GATE A: PASS ✅ — Recording Spike の完了条件を満たしました（10 分録画を含む全項目）");
 }
-else if (autoOk)
+else if (autoOk && manualOk)
 {
     Console.WriteLine();
-    Console.WriteLine("GATE A: 自動項目のみ PASS。手動確認項目の回答待ち");
+    // 監査 SP-1 対応: --full（10 分録画）なしでは「GATE A: PASS」「完了条件を満たした」と表示しない
+    Console.WriteLine("自動・手動項目は PASS — ただし 10 分録画シナリオを未実施のため Gate A 完了判定は行いません（--full で再実行してください）");
 }
 return autoOk && manualOk ? 0 : 1;
 
@@ -122,6 +123,10 @@ static async Task RunScenario(string name, int seconds, bool pauseTest, bool use
     {
         File.Delete(outPath);
     }
+
+    // 実撮影開始（Canonical 0ms）と停止完了の実時刻を取り、Duration 判定を wall 実測と突き合わせる（監査 SP-2 対応）
+    DateTime? captureStartedAt = null;
+    engine.CaptureStarted += (_, _) => captureStartedAt = DateTime.Now;
 
     var mic = useMic ? engine.GetMicrophones().FirstOrDefault() : null;
     var sys = useSys ? engine.GetSystemAudioDevices().FirstOrDefault() : null;
@@ -197,6 +202,44 @@ static async Task RunScenario(string name, int seconds, bool pauseTest, bool use
         diff <= 2.0,
         $"engine={result.Duration.TotalSeconds:F1}s / mp4={mp4.DurationSeconds:F1}s / 実経過={wallSeconds:F1}s (差 {diff:F1}s)"));
 
+    // 実撮影経過（CaptureStarted → Stop 完了から Pause を除いた値）と MP4 を突き合わせる。
+    // engine 論理 Duration との一致判定だけでは、両者が同方向にずれても検出できないため（監査 SP-2）
+    if (captureStartedAt is { } cs)
+    {
+        var wallCapture = (DateTime.Now - cs).TotalSeconds - (pauseTest ? 3.0 : 0);
+        var drift = Math.Abs(mp4.DurationSeconds - wallCapture);
+        checks.Add(new CheckResult(
+            $"{name}: 実撮影経過との整合（±1.5 秒）",
+            drift <= 1.5,
+            $"mp4={mp4.DurationSeconds:F1}s / 実撮影経過={wallCapture:F1}s (差 {drift:F1}s)"));
+    }
+    else
+    {
+        checks.Add(new CheckResult($"{name}: 実撮影経過との整合", false, "CaptureStarted が発火していません"));
+    }
+
+    // 音声の無音検査。トラックの存在だけでは無音故障を検出できないため（監査 SP-3）、
+    // ffmpeg（tools/get-ffmpeg.ps1 で取得）があれば mean_volume で判定する。無ければ警告扱い
+    if (mp4.HasAudio)
+    {
+        var ffmpeg = LocateFfmpeg();
+        if (ffmpeg is null)
+        {
+            checks.Add(new CheckResult($"{name}: 音声無音検査", null, "ffmpeg が見つからず音量検査をスキップ（tools\\get-ffmpeg.ps1 を実行）", true));
+        }
+        else
+        {
+            var meanVolume = ProbeMeanVolume(ffmpeg, outPath);
+            checks.Add(meanVolume is { } mv
+                ? new CheckResult(
+                    $"{name}: 音声が無音でない",
+                    mv > -50.0,
+                    // 無音はおおむね -90dB 前後。実音があれば -50dB より十分高くなる
+                    $"mean_volume={mv:F1} dB")
+                : new CheckResult($"{name}: 音声無音検査", null, "音量解析に失敗（ffmpeg の出力を確認）", true));
+        }
+    }
+
     Console.WriteLine($"   → 完了: engine={result.Duration.TotalSeconds:F1}s, mp4={mp4.DurationSeconds:F1}s, 実経過={wallSeconds:F1}s");
 }
 
@@ -210,6 +253,44 @@ static void AskManual(string question, List<CheckResult> results, bool interacti
     Console.Write($"  {question} (y/n) > ");
     var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
     results.Add(new CheckResult(question, answer is "y" or "yes", answer));
+}
+
+/// <summary>tools/ffmpeg/bin/ffmpeg.exe を探す（bin 出力から上位へ）。無ければ null。</summary>
+static string? LocateFfmpeg()
+{
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    for (var i = 0; i < 10 && dir is not null; i++, dir = dir.Parent!)
+    {
+        var candidate = Path.Combine(dir.FullName, "tools", "ffmpeg", "bin", "ffmpeg.exe");
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
+/// <summary>ffmpeg volumedetect で mean_volume (dB) を取得。解析に失敗したら null。</summary>
+static double? ProbeMeanVolume(string ffmpeg, string file)
+{
+    try
+    {
+        var psi = new ProcessStartInfo(ffmpeg, $"-i \"{file}\" -map 0:a:0 -af volumedetect -f null NUL")
+        {
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        using var p = Process.Start(psi)!;
+        var stderr = p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        var match = System.Text.RegularExpressions.Regex.Match(stderr, @"mean_volume:\s*(-?[\d.]+)\s*dB");
+        return match.Success ? double.Parse(match.Groups[1].Value) : null;
+    }
+    catch
+    {
+        return null;
+    }
 }
 
 static void PrintSummary(List<CheckResult> checks)
