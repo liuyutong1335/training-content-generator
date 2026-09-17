@@ -167,3 +167,29 @@ spike\integration-smoke\bin\x64\Debug\net8.0-windows\win-x64\IntegrationSmoke.ex
   - 検証: `dotnet test` Video 26/26 合格・`spike/video-compose-check` 全 5 項目 PASS（進捗報告 9 回が単調に 0→100% をカバー）
 
 
+
+---
+
+## 9. RC-2（Capture preparation 中の Cancel）検証記録（2026-09-17）
+
+D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材料として、実機検証を実施した。
+検証ツール: `spike/preparation-cancel-check/`（StartAsync 直後の StopAsync → 再利用録画の 2 セッション・自動判定・全 5 項目 PASS）。
+
+- **判定 1（Q1/Q2: lifecycle）**: `StartAsync` は同期的に戻り、直後に `StopAsync` を呼んでも
+  ハングせず即時完了する。D は「StartAsync 完了待ち → Cancel 発行」でよく、CaptureStarted 待ちは不要。
+- **エンジン側修正**: preparation 中の停止では ScreenRecorderLib の `Stop()` を呼ばず
+  `Recorder.Dispose()` で打ち切る実装に変更した（`ScreenRecorderRecordingEngine.StopAsync`）。
+  初期化中の `Stop()` は MP4 シンクが正常に閉じないため。
+- **判定 2（Q3: Stop semantics）**: `Duration = 0`（BuildResult の CaptureStarted 前経路）で
+  preparation cancel を識別できる。既存実装のままで契約変更なし。
+- **判定 3（Q4: temp MP4）**: preparation cancel の残留 MP4 は **0 バイト**（canonical recording ではない）。
+  **既知の lib 制約**: この 0 バイトファイルのハンドルは ScreenRecorderLib 6.6.0 の内部リークにより
+  プロセス終了まで解放されない（Recorder.Dispose でも解放不可。OneDrive/%TEMP% でも同様＝プロセス内リーク）。
+  呼び出し側は削除を試みて失敗なら無視してよい（0 バイトかつ captureReady == false）。
+- **判定 4（対照）**: 正常録画（CaptureStarted 後に Stop）の完了直後はファイルロックなし
+  ＝ロック残留は preparation cancel 経路特有。
+- **Q5/Q6（watchdog）**: 実装不要（案 B の明示 Cancel で恒久対処）とする回答を D へ提示。
+  正常時でも preparation は WGC 初期化 ~2 秒＋機器列挙等で伸び得るため、固定 timeout は誤爆の恐れがある。
+- **THIRD_PARTY_NOTICES.md**: ScreenRecorderLib の Copyright を package 同梱 LICENSE 原文どおり
+  「Copyright (c) 2017 Sverre Skodje」に修正（旧記載「Ramin Kaviani」は誤り）。
+  FFmpeg（BtbN LGPL ビルド・LGPL-3.0・外部プロセス起動・非同梱）のセクションを追加。
