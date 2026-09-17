@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------
+# Line endings
+#
+# 目的:
+#   - 開発者ごとの core.autocrlf 設定差を吸収する
+#   - リポジトリ内の text file を LF に統一する
+#   - 不要な whole-file EOL diff を防ぐ
+#   - text fixture / script / docs 等の byte-level EOL を安定させる
+#
+# バイナリ（.mp4 等）はここで宣言しない。* text=auto を導入していないため、
+# 既存の git の自動判定に任せる。
+# ---------------------------------------------------------------------
+
+# C# ソース / プロジェクト / ソリューション
+*.cs      text eol=lf
+*.csproj  text eol=lf
+*.sln     text eol=lf
+
+# WPF / ドキュメント / データ / 設定
+*.xaml    text eol=lf
+*.md      text eol=lf
+*.json    text eol=lf
+*.jsonl   text eol=lf
+*.toml    text eol=lf
+
+# 補助スクリプト
+*.py      text eol=lf
+*.ps1     text eol=lf
+
+.gitattributes text eol=lf
+.gitignore     text eol=lf
