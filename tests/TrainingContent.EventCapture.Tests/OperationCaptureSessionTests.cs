@@ -57,9 +57,26 @@ public class OperationCaptureSessionTests : IDisposable
         // フックスレッド / ワーカースレッドが残留していないこと。
         Assert.False(session.IsHookThreadAliveForTest);
         Assert.False(session.IsWorkerAliveForTest);
+        // Start 失敗セッションは「録画中」ではないこと（RC-2: Cancel 判定用）。
+        Assert.False(session.IsRecording);
 
         // 失敗したセッションの Dispose が安全に完了すること（ハングしない）。
         session.Dispose();
+    }
+
+    [Fact]
+    public void IsRecordingはStart成功からStopまでtrue()
+    {
+        using var session = CreateSession();
+
+        // Start 前: 録画中ではない（Cancel なら Dispose する分岐）。
+        Assert.False(session.IsRecording);
+
+        session.Start();
+        Assert.True(session.IsRecording);
+
+        var _ = session.Stop();
+        Assert.False(session.IsRecording);
     }
 
     [Fact]

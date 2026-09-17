@@ -66,6 +66,14 @@ public sealed class OperationCaptureSession : IDisposable
 
     public string ProjectDirectory { get; }
 
+    /// <summary>
+    /// 録画処理中か（Start が正常に完了して以降〜Stop まで）。
+    /// Capture preparation 中の Cancel 判定など、呼び出し側の分岐用:
+    /// false なら Stop は呼ばず Dispose する（Stop は InvalidOperationException を投げる）。
+    /// Start 失敗セッション・停止済みセッションでは false。書き込み直後の一瞬の遅れはあり得る。
+    /// </summary>
+    public bool IsRecording => _started && !_startFailed && !_stopped;
+
     /// <summary>書き出した Event の総数（recording.* ライフサイクルを含む）。</summary>
     public long EventCount => _writer?.Count ?? 0;
 
