@@ -79,7 +79,8 @@ public static class AssSubtitleWriter
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
-        sb.AppendLine($"Dialogue: 0,0:00:00.000,{FormatTime((long)(seconds * 1000))},Card,,0,0,0,,{EscapeText(text)}");
+        // \fad で 0.3 秒のフェードイン/アウト（カードの切り替わりを滑らかにする）
+        sb.AppendLine($"Dialogue: 0,0:00:00.000,{FormatTime((long)(seconds * 1000))},Card,,0,0,0,,{{\\fad(300,300)}}{EscapeText(text)}");
         return sb.ToString();
     }
 }
