@@ -506,7 +506,14 @@ public sealed class RecordingCoordinator
                 project.UpdatedAtUtc = DateTimeOffset.UtcNow;
 
                 await _projectStore.SaveProjectAsync(project).ConfigureAwait(true);
-                _currentProject.SetCurrent(project);
+
+                // 保存中に別 Project が Current になっていた場合、保存済みの録画対象へ
+                // Current Project を巻き戻さない（ProjectWorkspace と同じ guard 形式）。
+                // 保存自体は既に成功しているため、ここで触るのは UI の Current Project だけ。
+                if (_currentProject.IsCurrent(projectId.Value))
+                {
+                    _currentProject.SetCurrent(project);
+                }
 
                 Trace.TraceInformation(
                     "RecordingCoordinator: integrated recording を保存しました（Engine {0:F0} ms / Event {1} ms）。",
