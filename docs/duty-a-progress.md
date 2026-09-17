@@ -193,3 +193,10 @@ D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材�
 - **THIRD_PARTY_NOTICES.md**: ScreenRecorderLib の Copyright を package 同梱 LICENSE 原文どおり
   「Copyright (c) 2017 Sverre Skodje」に修正（旧記載「Ramin Kaviani」は誤り）。
   FFmpeg（BtbN LGPL ビルド・LGPL-3.0・外部プロセス起動・非同梱）のセクションを追加。
+- **追記（同日・integration-smoke 再実行時の修正）**: 通常停止（CaptureStarted 後）の完了直後に
+  `Recorder` を即解放しないよう戻した — lib の完了処理と解放が競合すると MP4 の終端書き込みが
+  欠ける恐れがあるため（解放は次 StartAsync の先頭 / engine.Dispose() で実施。preparation cancel
+  経路の即時破棄は維持）。integration-smoke は再実行 2 回とも全 4 項目 PASS
+  （MP4 と Engine 論理 Duration の差 0.28s / 0.32s）。なお負荷が高い環境ではこの差が
+  ~1.1s まで膨らみ ±1s 判定を超過する実機観測がある（2026-09-17 17:43 / 17:44 の 2 回）。
+  判定の再現性確認の際は機器負荷に注意すること。
