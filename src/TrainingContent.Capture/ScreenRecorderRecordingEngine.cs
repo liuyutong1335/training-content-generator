@@ -67,6 +67,9 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         _pauseIntervals.Clear();
         _pauseStartedAt = null;
 
+        // 前セッションの Recorder が残留している場合は先に解放する（再利用時のリソースリーク防止）
+        DisposeRecorder();
+
         var recorderOptions = MapToLibOptions(options);
         _recorder = ScreenRecorderLib.Recorder.CreateRecorder(recorderOptions);
         _recorder.OnRecordingComplete += OnRecordingComplete;
@@ -104,7 +107,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         return Task.CompletedTask;
     }
 
-    public Task<RecordingResult> StopAsync(CancellationToken cancellationToken = default)
+    public async Task<RecordingResult> StopAsync(CancellationToken cancellationToken = default)
     {
         EnsureRecording();
         if (_pauseStartedAt is not null)
@@ -115,9 +118,29 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         }
 
         State = RecordingState.Stopping;
+
+        if (!_captureStarted)
+        {
+            // CaptureStarted 前（WGC 初期化窓内）の停止: lib の Stop() を呼ばずに
+            // Recorder を直接破棄して打ち切る。初期化中の Stop() では MP4 シンクが
+            // 正常に閉じず、0 バイト MP4 がプロセス終了までロック残留する
+            // （preparation-cancel-check で実機確認。Recorder.Dispose でも解放されない
+            //   ScreenRecorderLib 6.6.0 の制約）。Canonical Timeline はまだ始まっていないため、
+            // Duration = 0 の結果を返す。残留する 0 バイトファイルの削除は呼び出し側に委ねる
+            // （失敗してもcanonical recording ではないため無視してよい）。
+            DisposeRecorder();
+            State = RecordingState.Idle;
+            var aborted = BuildResult(_currentOptions!.OutputFilePath);
+            _completionSource?.TrySetResult(aborted);
+            return aborted;
+        }
+
         _recorder!.Stop();
         // OnRecordingComplete / OnRecordingFailed で完了する
-        return _completionSource!.Task.WaitAsync(cancellationToken);
+        // 注意: 完了後にここで Dispose しない（lib の完了処理と競合し MP4 の終端書き込みが
+        // 欠けることがある — integration-smoke 項目 4 で実機検出）。解放は次の StartAsync
+        // （先頭の DisposeRecorder）か engine.Dispose() で行う。
+        return await _completionSource!.Task.WaitAsync(cancellationToken);
     }
 
     /// <summary>
@@ -255,6 +278,12 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     }
 
     public void Dispose()
+    {
+        DisposeRecorder();
+    }
+
+    /// <summary>Recorder を解放し、イベント購読を解除する（冪等）。</summary>
+    private void DisposeRecorder()
     {
         if (_recorder is not null)
         {

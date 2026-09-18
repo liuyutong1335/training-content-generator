@@ -24,6 +24,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrainingContent.Storage", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrainingContent.Storage.Tests", "tests\TrainingContent.Storage.Tests\TrainingContent.Storage.Tests.csproj", "{68419612-EF4B-4A0E-82C4-C30892FB7B0C}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PreparationCancelCheck", "spike\preparation-cancel-check\PreparationCancelCheck.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -74,6 +76,10 @@ Global
 		{68419612-EF4B-4A0E-82C4-C30892FB7B0C}.Debug|x64.Build.0 = Debug|x64
 		{68419612-EF4B-4A0E-82C4-C30892FB7B0C}.Release|x64.ActiveCfg = Release|x64
 		{68419612-EF4B-4A0E-82C4-C30892FB7B0C}.Release|x64.Build.0 = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Debug|x64.ActiveCfg = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Debug|x64.Build.0 = Debug|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Release|x64.ActiveCfg = Release|x64
+		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

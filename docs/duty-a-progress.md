@@ -159,4 +159,44 @@ spike\integration-smoke\bin\x64\Debug\net8.0-windows\win-x64\IntegrationSmoke.ex
 - **テスト**: `dotnet test` 32/32 合格（Core 13 + Capture 3 + Video 16）。実機検証は `spike/video-compose-check/`（Title/Ending 込み 15 秒出力の ffprobe 実測 + フレーム画素差で字幕焼き込みを証明）
 - **未解決**: O-01（無操作区間の自動短縮）は Post-MVP。TTS は v0.5 以降。sln 登録済み（Video / Video.Tests）。実装分は **PR #10**（PR #9 は spike のみ先行マージ）。main 取込み済み（2026-09-16）
   例会事項: README 構成図の owner 表記修正（Video を A に）・開発計画書 §24 への Video Generator 追記・§8 OSS 一覧への FFmpeg 追加と THIRD_PARTY_NOTICES.md への記載
+- **追記（2026-09-17・D 統合向け強化）**: 生成処理の進捗報告とキャンセル時の後始末を実装
+  - `VideoCompositionOptions.Progress`（`IProgress<VideoCompositionProgress>`）— 段階（入力解析 / 字幕焼き込み / Title / Ending / 結合 / 検証）と全体進捗 0→100% を報告。ffmpeg `-progress pipe:1` を `-nostats` 付きで起動して `out_time_us` を解析（**区切りは `=`。`:` で切ると 1 行も解析できない** — 実機で発見）
+  - キャンセル時は ffmpeg を `Kill(entireProcessTree: true)` で残さず終了させる（旧実装は CancellationToken が飛んでも ffmpeg が temp を握り続けた）
+  - `FfmpegProgressParser`（pure logic・単体テスト 5 本）を新設。out_time_ms は ffmpeg の歴史的経緯でマイクロ秒値が出るため out_time_us を優先
+  - Title / Ending カードに `\fad(300,300)` のフェードを追加
+  - 検証: `dotnet test` Video 26/26 合格・`spike/video-compose-check` 全 5 項目 PASS（進捗報告 9 回が単調に 0→100% をカバー）
 
+
+
+---
+
+## 9. RC-2（Capture preparation 中の Cancel）検証記録（2026-09-17）
+
+D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材料として、実機検証を実施した。
+検証ツール: `spike/preparation-cancel-check/`（StartAsync 直後の StopAsync → 再利用録画の 2 セッション・自動判定・全 5 項目 PASS）。
+
+- **判定 1（Q1/Q2: lifecycle）**: `StartAsync` は同期的に戻り、直後に `StopAsync` を呼んでも
+  ハングせず即時完了する。D は「StartAsync 完了待ち → Cancel 発行」でよく、CaptureStarted 待ちは不要。
+- **エンジン側修正**: preparation 中の停止では ScreenRecorderLib の `Stop()` を呼ばず
+  `Recorder.Dispose()` で打ち切る実装に変更した（`ScreenRecorderRecordingEngine.StopAsync`）。
+  初期化中の `Stop()` は MP4 シンクが正常に閉じないため。
+- **判定 2（Q3: Stop semantics）**: `Duration = 0`（BuildResult の CaptureStarted 前経路）で
+  preparation cancel を識別できる。既存実装のままで契約変更なし。
+- **判定 3（Q4: temp MP4）**: preparation cancel の残留 MP4 は **0 バイト**（canonical recording ではない）。
+  **既知の lib 制約**: この 0 バイトファイルのハンドルは ScreenRecorderLib 6.6.0 の内部リークにより
+  プロセス終了まで解放されない（Recorder.Dispose でも解放不可。OneDrive/%TEMP% でも同様＝プロセス内リーク）。
+  呼び出し側は削除を試みて失敗なら無視してよい（0 バイトかつ captureReady == false）。
+- **判定 4（対照）**: 正常録画（CaptureStarted 後に Stop）の完了直後はファイルロックなし
+  ＝ロック残留は preparation cancel 経路特有。
+- **Q5/Q6（watchdog）**: 実装不要（案 B の明示 Cancel で恒久対処）とする回答を D へ提示。
+  正常時でも preparation は WGC 初期化 ~2 秒＋機器列挙等で伸び得るため、固定 timeout は誤爆の恐れがある。
+- **THIRD_PARTY_NOTICES.md**: ScreenRecorderLib の Copyright を package 同梱 LICENSE 原文どおり
+  「Copyright (c) 2017 Sverre Skodje」に修正（旧記載「Ramin Kaviani」は誤り）。
+  FFmpeg（BtbN LGPL ビルド・LGPL-3.0・外部プロセス起動・非同梱）のセクションを追加。
+- **追記（同日・integration-smoke 再実行時の修正）**: 通常停止（CaptureStarted 後）の完了直後に
+  `Recorder` を即解放しないよう戻した — lib の完了処理と解放が競合すると MP4 の終端書き込みが
+  欠ける恐れがあるため（解放は次 StartAsync の先頭 / engine.Dispose() で実施。preparation cancel
+  経路の即時破棄は維持）。integration-smoke は再実行 2 回とも全 4 項目 PASS
+  （MP4 と Engine 論理 Duration の差 0.28s / 0.32s）。なお負荷が高い環境ではこの差が
+  ~1.1s まで膨らみ ±1s 判定を超過する実機観測がある（2026-09-17 17:43 / 17:44 の 2 回）。
+  判定の再現性確認の際は機器負荷に注意すること。
