@@ -158,7 +158,7 @@ spike\integration-smoke\bin\x64\Debug\net8.0-windows\win-x64\IntegrationSmoke.ex
   - concat は音声パラメータ不一致（録画側 AAC と anullsrc）で壊れ得るため再エンコードで繋ぐ
 - **テスト**: `dotnet test` 32/32 合格（Core 13 + Capture 3 + Video 16）。実機検証は `spike/video-compose-check/`（Title/Ending 込み 15 秒出力の ffprobe 実測 + フレーム画素差で字幕焼き込みを証明）
 - **未解決**: O-01（無操作区間の自動短縮）は Post-MVP。TTS は v0.5 以降。sln 登録済み（Video / Video.Tests）。実装分は **PR #10**（PR #9 は spike のみ先行マージ）。main 取込み済み（2026-09-16）
-  例会事項: README 構成図の owner 表記修正（Video を A に）・開発計画書 §24 への Video Generator 追記・§8 OSS 一覧への FFmpeg 追加と THIRD_PARTY_NOTICES.md への記載
+  例会事項: README 構成図の owner 表記修正（Video を A に）・開発計画書 §24 への Video Generator 追記・§8 OSS 一覧への FFmpeg 追加 — **✅ 実施済（2026-09-18・THIRD_PARTY_NOTICES.md は §9 で対応済み）**
 - **追記（2026-09-17・D 統合向け強化）**: 生成処理の進捗報告とキャンセル時の後始末を実装
   - `VideoCompositionOptions.Progress`（`IProgress<VideoCompositionProgress>`）— 段階（入力解析 / 字幕焼き込み / Title / Ending / 結合 / 検証）と全体進捗 0→100% を報告。ffmpeg `-progress pipe:1` を `-nostats` 付きで起動して `out_time_us` を解析（**区切りは `=`。`:` で切ると 1 行も解析できない** — 実機で発見）
   - キャンセル時は ffmpeg を `Kill(entireProcessTree: true)` で残さず終了させる（旧実装は CancellationToken が飛んでも ffmpeg が temp を握り続けた）
