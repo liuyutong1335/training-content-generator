@@ -117,6 +117,35 @@ public sealed class ProjectWorkspace
     }
 
     /// <summary>
+    /// Review UI（B1）の編集結果を Step 集合へ反映する。
+    /// Current Project を更新した場合は Current Project も最新 snapshot へ差し替える。
+    ///
+    /// <para>
+    /// Current Project の差し替えは <b>Storage の保存が成功した後</b>だけ行う。
+    /// Storage が投げた場合はここへ到達しないため、Current Project は旧状態のまま残る。
+    /// 別 Project を更新しても Current Project は上書きしない（identity guard）。
+    /// </para>
+    /// <para>
+    /// delete / reorder / Revision / no-op 判定は Storage 側の責務で、ここでは操作しない。
+    /// </para>
+    /// </summary>
+    public async Task<TrainingProject> UpdateReviewedStepsAsync(
+        Guid projectId,
+        IReadOnlyList<StepReviewUpdate> updates,
+        CancellationToken cancellationToken = default)
+    {
+        var updated = await _projectStore
+            .UpdateReviewedStepsAsync(projectId, updates, cancellationToken);
+
+        if (_currentProject.IsCurrent(projectId))
+        {
+            _currentProject.SetCurrent(updated);
+        }
+
+        return updated;
+    }
+
+    /// <summary>
     /// 削除する。Current Project を削除した場合のみ Current Project を解除する
     /// （別 Project の削除では維持）。
     /// </summary>

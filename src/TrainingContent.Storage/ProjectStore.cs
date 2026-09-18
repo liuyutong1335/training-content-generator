@@ -351,6 +351,159 @@ public sealed class ProjectStore
     }
 
     // ---------------------------------------------------------------------
+    // Reviewed steps（B1: Review UI の編集結果を反映する narrow な mutation boundary）
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Review UI（B1）の編集結果を Step 集合へ反映する。
+    ///
+    /// <para>
+    /// 意味: <paramref name="updates"/> に含まれる Step は残し、<b>含まれない既存 Step は削除</b>する。
+    /// request list の順序が canonical な <see cref="TrainingStep.Order"/> になり、保存時に <b>1..N</b> へ
+    /// 正規化する。B1 では Step の新規追加を許可しないため、未知の StepId は reject する。
+    /// </para>
+    /// <para>
+    /// 編集対象は Title / Description / Caution / ExpectedResult <b>のみ</b>。
+    /// Id / StartMs / EndMs / Action / Target / ScreenshotPath / SourceEventIds は既存 canonical Step から
+    /// 保持し、caller 由来の <see cref="TrainingStep"/> object は一切受け取らない。
+    /// </para>
+    /// <para>
+    /// 正規化: Description / Caution / ExpectedResult の null / empty / whitespace-only は canonical な
+    /// null として扱う（UI の <c>""</c> と canonical null の差だけで Revision が増えるのを防ぐ）。
+    /// Title は trim しないが、null / blank は保存不可。
+    /// </para>
+    /// <para>
+    /// 実質的な変更が無い場合は <see cref="SaveProjectAsync"/> を呼ばず、Revision も UpdatedAtUtc も
+    /// 動かさない。
+    /// </para>
+    /// </summary>
+    /// <returns>更新後の Project。no-op だった場合は保存せず、読み込んだ Project をそのまま返す。</returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="updates"/> が null ／ 要素が null ／ StepId が <see cref="Guid.Empty"/> ／
+    /// StepId が重複 ／ Title が null・blank ／ StepId が既存 Step に存在しない。
+    /// </exception>
+    /// <exception cref="ProjectStoreException">Project が見つからない、または保存に失敗した。</exception>
+    public async Task<TrainingProject> UpdateReviewedStepsAsync(
+        Guid projectId,
+        IReadOnlyList<StepReviewUpdate> updates,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(updates);
+
+        // ---- 入力の検査（disk に触る前）----
+        var requestedIds = new HashSet<Guid>();
+        foreach (var update in updates)
+        {
+            if (update is null)
+            {
+                throw new ArgumentException("updates に null 要素は指定できません。", nameof(updates));
+            }
+
+            if (update.StepId == Guid.Empty)
+            {
+                throw new ArgumentException("StepId に Guid.Empty は指定できません。", nameof(updates));
+            }
+
+            if (!requestedIds.Add(update.StepId))
+            {
+                throw new ArgumentException($"StepId が重複しています: {update.StepId:D}", nameof(updates));
+            }
+
+            if (string.IsNullOrWhiteSpace(update.Title))
+            {
+                throw new ArgumentException($"Title は null / blank 禁止です (StepId={update.StepId:D})。", nameof(updates));
+            }
+        }
+
+        var project = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new ProjectStoreException($"Project が見つかりません: {projectId:D}");
+
+        // ---- 未知 StepId の拒否（B1 では新規追加不可）----
+        var byId = project.Steps.ToDictionary(step => step.Id);
+        foreach (var update in updates)
+        {
+            if (!byId.ContainsKey(update.StepId))
+            {
+                throw new ArgumentException(
+                    $"Step が見つかりません: {update.StepId:D} (Project {projectId:D})。Step の新規追加はできません。",
+                    nameof(updates));
+            }
+        }
+
+        var existingOrdered = project.Steps.OrderBy(step => step.Order).ToList();
+
+        // 実質的な変更が無ければ保存しない（Revision も UpdatedAtUtc も動かさない）。
+        if (IsSameAsRequested(existingOrdered, updates))
+        {
+            return project;
+        }
+
+        // ---- candidate 構築（disk から load した instance のみ。UI / CurrentProject と共有しない）----
+        var candidate = new List<TrainingStep>(updates.Count);
+        for (var i = 0; i < updates.Count; i++)
+        {
+            var update = updates[i];
+            var step = byId[update.StepId];
+
+            // 編集対象 4 項目だけを更新する。Id / StartMs / EndMs / Action / Target /
+            // ScreenshotPath / SourceEventIds はこの instance の既存値をそのまま保持する。
+            step.Title = update.Title;
+            step.Description = NormalizeOptional(update.Description);
+            step.Caution = NormalizeOptional(update.Caution);
+            step.ExpectedResult = NormalizeOptional(update.ExpectedResult);
+
+            // request list の位置が canonical な Order（1..N）になる。
+            step.Order = i + 1;
+
+            candidate.Add(step);
+        }
+
+        // 集合ごと差し替える（updates に含まれない既存 Step は削除される）。
+        project.Steps = candidate;
+        project.Revision++;
+        project.UpdatedAtUtc = DateTimeOffset.UtcNow;
+
+        await SaveProjectAsync(project, cancellationToken).ConfigureAwait(false);
+        return project;
+    }
+
+    /// <summary>null / empty / whitespace-only を canonical な null に寄せる（値は trim しない）。</summary>
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// 正規化後の request が現在の canonical Steps と実質的に同一か。
+    /// 比較対象は Step 数 / 並び（= 結果の Order）/ Title / 正規化済みの 3 optional field。
+    /// </summary>
+    private static bool IsSameAsRequested(
+        IReadOnlyList<TrainingStep> existingOrdered,
+        IReadOnlyList<StepReviewUpdate> updates)
+    {
+        if (existingOrdered.Count != updates.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < updates.Count; i++)
+        {
+            var existing = existingOrdered[i];
+            var update = updates[i];
+
+            if (existing.Id != update.StepId
+                || existing.Order != i + 1
+                || !string.Equals(existing.Title, update.Title, StringComparison.Ordinal)
+                || !string.Equals(existing.Description, NormalizeOptional(update.Description), StringComparison.Ordinal)
+                || !string.Equals(existing.Caution, NormalizeOptional(update.Caution), StringComparison.Ordinal)
+                || !string.Equals(existing.ExpectedResult, NormalizeOptional(update.ExpectedResult), StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // ---------------------------------------------------------------------
     // Delete
     // ---------------------------------------------------------------------
 
