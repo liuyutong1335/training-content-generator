@@ -78,7 +78,7 @@ TrainingContentGenerator.sln
 │  ├─ TrainingContent.App/        D: WPF Shell・Recording/Review UI・Content Manager
 │  ├─ TrainingContent.Core/       共有: TrainingProject / TimelineEvent / TrainingStep（変更は4名合議）
 │  ├─ TrainingContent.Capture/    A: Recording Engine（ScreenRecorderLib 抽象化・デバイス列挙・Pause/Resume）
-│  ├─ TrainingContent.Video/      B: Timeline / Overlay / Subtitle / Renderer
+│  ├─ TrainingContent.Video/      A: Timeline / Subtitle / Renderer（FFmpeg 合成）
 │  ├─ TrainingContent.Manual/     C: Markdown / HTML 生成
 │  └─ TrainingContent.Storage/    D: ProjectStore / ContentIndex
 ├─ tests/                          xUnit（Core/Capture/Manual/Video/Integration）
@@ -92,7 +92,7 @@ TrainingContentGenerator.sln
 
 | 担当 | 主領域 | 参考 Repository |
 |------|--------|----------------|
-| **A: Recording Engine** | `TrainingContent.Capture` | ScreenRecorderLib / NessStudio |
+| **A: Recording Engine / Video Generator** | `TrainingContent.Capture` / `TrainingContent.Video` | ScreenRecorderLib / FFmpeg / NessStudio |
 | B: Event Capture / Timeline | Mouse/Keyboard Hook・UIA・Master Clock・events.jsonl | OpenSteps |
 | C: Training Content | TrainingStep / StepBuilder / Screenshot / Redaction / Manual | OpenSteps |
 | D: App / Integration | WPF Shell / ProjectStore / Content Manager / E2E | OpenSteps SessionStore |
