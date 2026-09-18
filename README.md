@@ -92,7 +92,7 @@ TrainingContentGenerator.sln
 
 | 担当 | 主領域 | 参考 Repository |
 |------|--------|----------------|
-| **A: Recording Engine** | `TrainingContent.Capture` | ScreenRecorderLib / NessStudio |
+| **A: Recording Engine / Video Generator** | `TrainingContent.Capture` / `TrainingContent.Video` | ScreenRecorderLib / FFmpeg / NessStudio |
 | B: Event Capture / Timeline | Mouse/Keyboard Hook・UIA・Master Clock・events.jsonl | OpenSteps |
 | C: Training Content | TrainingStep / StepBuilder / Screenshot / Redaction / Manual | OpenSteps |
 | D: App / Integration | WPF Shell / ProjectStore / Content Manager / E2E | OpenSteps SessionStore |

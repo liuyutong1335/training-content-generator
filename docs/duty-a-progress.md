@@ -52,7 +52,7 @@ spike/integration-smoke/     A+B 統合スモークテスト（Phase 2・自動�
 ### B・C・D へのインターフェース（これが A→全体の受け渡し形）
 
 ```csharp
-// A が返す RecordingResult（契約 §11 の RecordingInfo にそのまま入る）
+// A が返す RecordingResult（契約 §7 の RecordingInfo にそのまま入る）
 new RecordingResult {
     FilePath  = "…/raw/recording.mp4",  // ScreenRecorderLib が音声をミックスした 1 本の MP4
     Duration  = TimeSpan,                // ★ Pause を除外した論理時間（契約 §5.2）
@@ -76,7 +76,7 @@ new RecordingResult {
 8. **WGC 初期化に ~2 秒かかる**ため、Canonical Timeline（0ms）は `RecorderStatus.Recording` になった瞬間に時計を合わせる（Record() 呼び出し時点で計測を始めると全タイムスタンプが ~2 秒ずれる）→ GateACheck で全シナリオ差 0.9s 以内を確認済み
 9. **v7.0.1 は音声系が Breaking Change**: `GetSystemAudioDevices(source)` 廃止（`GetSystemAudioCaptureDevices` / `GetSystemAudioLoopbackDevices` に分離）、`AudioInputDevice`/`AudioOutputDevice` 廃止 → `AudioSources` リスト（`CaptureAudioSource` / `LoopbackAudioSource` / `ProcessAudioSource`）に一本化。`OnAudioPacketRecorded` イベント追加（将来の音ズレ検証・STT に有用）。`IRecordingEngine` 抽象は影響なし（実装差し替えで吸収可能）
 10. **v7.0.1 実録比較の結論**: 初回測定で「mp4 が論理時間より 3.2s 短い異常」に見えたが、**比較スクリプト側の測定ミス**（Pause 減算漏れ）で、修正後は v6.6.0 と同等（差 0.7s 以内）だった。faststart は v7 でも効かず（両バージョン共通の制約）。v7 は音声系 API の Breaking Change のみが実質的な移行コスト。→ **MVP は v6.6.0（実績あり・契約整合済み）を推奨、v7 への移行は低リスト**。検証ツール: `spike/v7-comparison/`
-11. **CaptureStarted 前の Stop で Duration が巨大になるバグ（2026-09-16 修正・D 側レビューで指摘）**: `_clock` はエンジン構築時に StartNew されるため、WGC 初期化の ~2 秒窓内（および同一インスタンスの 2 回目 `StartAsync` 直後）に `StopAsync` すると `CanonicalDuration()` の起点が実撮影開始より前になり、実録時間より大幅に大きい値を返していた。**修正**: `BuildResult` で `_captureStarted == false` の場合は `Duration = TimeSpan.Zero`・`PauseIntervals = []` を返す。併せて CaptureStarted 時点で旧クロック領域の Pause 情報を破棄（WGC 窓内 Pause → Resume の区間が残るため）。統合アプリでは Coordinator が `!_captureReady` を fault 扱いするため影響なし・単独利用（ツール類）時のみ顕在化。ユニットテスト不可（完了イベントが実録依存のため）— 実機再現は `spike/capture-started-check/` で継続確認
+11. **CaptureStarted 前の Stop で Duration が巨大になるバグ（2026-09-16 修正・D 側レビューで指摘）**: `_clock` はエンジン構築時に StartNew されるため、WGC 初期化の ~2 秒窓内（および同一インスタンスの 2 回目 `StartAsync` 直後）に `StopAsync` すると `CanonicalDuration()` の起点が実撮影開始より前になり、実録時間より大幅に大きい値を返していた。**修正**: `BuildResult` で `_captureStarted == false` の場合は `Duration = TimeSpan.Zero`・`PauseIntervals = []` を返す。併せて CaptureStarted 時点で旧クロック領域の Pause 情報を破棄（WGC 窓内 Pause → Resume の区間が残るため）。統合アプリでは Coordinator が `!_captureReady` を fault 扱いするため影響なし・単独利用（ツール類）時のみ顕在化。ユニットテスト不可（完了イベントが実録依存のため）— 実機再現は `spike/capture-started-check/` で継続確認。※契約参照は §7（`StartedAtUtc`）
 12. **要件カバレッジ監査（2026-09-16）への対応 — A の検証ツールの判定強化**: 監査 §07 SP 系の指摘に対し以下を修正した。
     - **NEW-3**（CONFIRMED）: `StartedAtUtc` が `StartAsync` 時刻のままで実撮影開始と ~1.5〜2.0s 離れていた → CaptureStarted 瞬間で上書きするよう修正（契約 §11 の「Master Session Clock の起点」どおり）
     - **SP-1**: `--full`（10 分録画）なしでは「GATE A: PASS」「完了条件を満たしました」を表示しないように変更（標準モードの全 PASS は「完了判定は行いません（--full で再実行）」と明示）
@@ -84,11 +84,11 @@ new RecordingResult {
     - **SP-3**: 音声はトラック存在確認のみだったため、ffmpeg（`tools/get-ffmpeg.ps1` で取得、無ければ WARN 扱いでスキップ）の `volumedetect` による無音検査（mean_volume > -50dB）を追加
     - **SP-4**: integration-smoke の events 検査を「type 2 種の存在確認」から、**seq 単調増加（§8.1）・started timestampMs=0（§20）・stopped が最終行（§20）**の検証に強化
     - **SP-5**: integration-smoke が MP4 を一度も開いていなかった問題 → `Mp4Inspector`（gate-a-check からソース共有）で MP4 を実際に解析し、「Duration が Engine 論理値と ±1s」「最終イベント時刻を覆う」を判定
-    - **未解決の注記**: 原点（0ms 対応）の frame-level 検証は自動化できておらず、G2 の差 146ms の原因・安定性も未証明のまま（監査指摘どおり）。テストスイートの内訳は本書 §4 の「16/16」は **main 構成（Core 13 + Capture 3）** の値であり、WPF ブランチ構成では 69/69（監査 §08 の記載どおり）。R-05（動画生成）は A 担当として FFmpeg + ASS 方式で spike 着手（`spike/video-compose-check/`）
+    - **未解決の注記**: 原点（0ms 対応）の frame-level 検証は自動化できておらず、G2 の差 146ms の原因・安定性も未証明のまま（監査指摘どおり）。テストスイートの合計は **42/42（Core 13 + Capture 3 + Video 26・2026-09-18 現在）**。WPF ブランチ構成では 69/69（監査 §08 の記載どおり）。R-05（動画生成）は A 担当として FFmpeg + ASS 方式で spike 着手（`spike/video-compose-check/`）
 
 ## 4. テスト状況
 
-- `dotnet test` **16/16 合格**（Core 契約テスト 13 + Capture 状態機械テスト 3）
+- `dotnet test` **42/42 合格**（Core 契約テスト 13 + Capture 状態機械テスト 3 + Video 26・2026-09-18 実機再確認。初期 Spike 完了時点は 16/16 だった）
 - 実機テスト: 10 秒 / 60 秒録画成功（60 秒版は Pause 2001ms を含み、論理 58400ms を正しく返した）
 
 ## 5. Phase 2 統合作業（2026-09-15 開始）
@@ -106,7 +106,7 @@ new RecordingResult {
    - B README 推奨手順（`CaptureStarted` 契機で `session.Start()`）を実際に実行
    - Engine 論理 5059ms vs Session 論理 4913ms（**差 146ms**・許容 ±500ms 内）
    - `events.jsonl` は契約 §20 どおり（`recording.started` timestampMs=0 / `recording.stopped` seq 4）
-   - D が Record UI を実装する際は本ツールのコードをそのまま転用できる（手順は B README どおりで追加調整なし）
+   - D が Record UI を実装する際は本ツールのコードをそのまま転用できる（手順は B README どおりで追加調整なし）。※当時の記載「sln は変更していない」は PR #5 時点のもの — その後 2026-09-17 の RC-2 対応（PR #12）で A も `PreparationCancelCheck` を sln に登録済み
 4. **PR 作成（2026-09-15）**: `feature/capture` → `main` へ Phase 2 第一弾（`CaptureStarted` + 実機検証 2 本）を Pull Request した。マージまで本ブランチで統合検証ツールが使える。`sln` は変更していない（§3 どおり D の窓口）
 
 ## 6. 未決事項・相談
