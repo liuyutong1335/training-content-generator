@@ -112,7 +112,7 @@ new RecordingResult {
 ## 6. 未決事項・相談
 
 1. **Master Clock の帰属**（B と）— `docs/integration-notes.md` §1 — **実装レベルでは解決**（D の `feature/WPF-integration` が B README 手順どおり実装・§5-2 参照）。例会での正式合意を残すのみ
-2. **Screenshot サービスの帰属**（B・C と）— 同 §2
+2. **Screenshot サービスの帰属**（B・C と）— 同 §2 — **解決（2026-09-18・例会なしのため実装整合の確認で確定。§2 追記参照）**
 3. 複数モニター環境での個別ディスプレイ録画指定（コード内 TODO(Spike A)・単一モニター環境では未検証）
 4. v7.0.1 への移行タイミング（音声パイプライン再設計時・知見 9・10）
 

@@ -19,6 +19,10 @@
 - 現状: B が `EventCapture/ScreenshotCapture.cs`（イベント連動 → `screenshots/original/`）、担当 C の領域に Step 用 Screenshot（→ `screenshots/edited/`）がある
 - 契約 §10/§12 の original / edited 区分で役割分担は明瞭だが、**original 撮影サービスの実装をどちらのプロジェクトに置くか**を決定する
 - 案: 撮影は B（イベントと同時に撮る）・加工（Redaction）は C。C が B の型を参照しなくていいよう、撮影結果のパスだけ契約 §10 の payload 形式で受け渡す
+- **決定（2026-09-18・A 確認）**: 上記案を確定とする。実装レベルで両担当とも案どおり —
+  B は `EventCapture/Screenshot/ScreenshotCapture.cs`（original 撮影）、C は `TrainingContent.Screenshot/`
+  （Redaction・独立プロジェクトで B の型に非依存・`ManualScreenshotPath` でパス受け渡し）を実装済み。
+  矛盾なし・追加の設計判断は不要。例会なしの方針のため実装整合の確認をもって確定とする
 
 ## 3. sln へのプロジェクト登録
 
