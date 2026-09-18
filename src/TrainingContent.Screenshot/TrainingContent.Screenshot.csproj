@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 担当 C: Screenshot / Redaction（開発計画書 §18 / §24、契約 §17 / §18 / §31）。
+       画像処理は System.Drawing を使用する（NuGet 追加なし・Windows 専用）。
+       依存は TrainingContent.Core のみ。具体的な保存・連携境界は C3-1 以降で確定する。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- System.Drawing を NuGet 追加なしで使うため（EventCapture と同じ方式） -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TrainingContent.Core\TrainingContent.Core.csproj" />
+  </ItemGroup>
+
+</Project>
