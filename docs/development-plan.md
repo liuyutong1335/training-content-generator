@@ -458,6 +458,7 @@ MIT License。
 | Repository               | MVP | 用途                          | 利用方法       |
 | ------------------------ | --: | --------------------------- | ---------- |
 | ScreenRecorderLib        |   ○ | Video/System Audio/Mic      | NuGet依存    |
+| FFmpeg（BtbN LGPL ビルド） |   ○ | Video 合成（字幕焼き込み・結合） | 外部プロセス起動 |
 | OpenSteps                |   ○ | Hook/UIA/Screenshot/Manual  | 部分移植       |
 | NessStudio               |   △ | Timeline/Session設計          | 参考         |
 | Microsoft Skill Recorder |   × | Smart Frame/STT/AI/Security | Post-MVP参考 |
@@ -1077,12 +1078,12 @@ Output確認
 
 | 担当 | 主領域                         | 参考Repository                   |
 | -- | --------------------------- | ------------------------------ |
-| A  | Recording Engine            | ScreenRecorderLib / NessStudio |
+| A  | Recording Engine / Video Generator | ScreenRecorderLib / FFmpeg / NessStudio |
 | B  | Event Capture / Timeline    | OpenSteps                      |
 | C  | Step / Screenshot / Manual  | OpenSteps                      |
 | D  | WPF / Project / Integration | OpenSteps SessionStore         |
 
-### A — Recording
+### A — Recording / Video Generator
 
 成果物：
 
@@ -1092,6 +1093,8 @@ ScreenRecorderRecordingEngine
 Device Enumeration
 Start/Pause/Resume/Stop
 MP4
+TrainingContent.Video（Timeline / Subtitle / Renderer）
+Training Video（MP4・FFmpeg + ASS 字幕焼き込み）
 ```
 
 ### B — Event / Timeline
