@@ -16,16 +16,188 @@
 
         <Border Grid.Row="1" Height="1" Background="#FFE0E0E0" Margin="0,12,0,20" />
 
-        <StackPanel Grid.Row="2">
-            <TextBlock Text="録画から生成された操作手順を確認・編集する画面です。"
-                       FontSize="15"
-                       FontWeight="SemiBold"
-                       Foreground="#FF333333"
-                       TextWrapping="Wrap" />
-            <TextBlock Text="この機能は現在準備中です。"
-                       Margin="0,12,0,0"
-                       Foreground="#FF888888"
-                       TextWrapping="Wrap" />
-        </StackPanel>
+        <Grid Grid.Row="2">
+
+            <!-- ===== Current Project なし ===== -->
+            <StackPanel x:Name="NoProjectPanel">
+                <TextBlock Text="プロジェクトが選択されていません。"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="#FF333333"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="ホームまたはコンテンツ管理からプロジェクトを作成・オープンしてください。"
+                           Margin="0,12,0,0"
+                           Foreground="#FF888888"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- ===== Project はあるが Steps が空 ===== -->
+            <StackPanel x:Name="NoStepsPanel" Visibility="Collapsed">
+                <TextBlock Text="操作手順はまだ生成されていません。"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="#FF333333"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="録画を完了すると手順が生成されます。"
+                           Margin="0,12,0,0"
+                           Foreground="#FF888888"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- ===== Review 本体（読み取り専用） ===== -->
+            <Grid x:Name="ReviewPanel" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="280" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- ===== Step List ===== -->
+                <DockPanel Grid.Column="0">
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="手順一覧"
+                               FontSize="11"
+                               Foreground="#FF888888"
+                               Margin="0,0,0,6" />
+                    <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White">
+                        <ListBox x:Name="StepListBox"
+                                 BorderThickness="0"
+                                 SelectionMode="Single"
+                                 SelectionChanged="StepListBox_SelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <!-- 表示のみ。TrainingStep の editable property へ TwoWay binding しない。 -->
+                                    <TextBlock TextWrapping="Wrap">
+                                        <Run Text="{Binding Order, Mode=OneWay}" /><Run Text=". " /><Run Text="{Binding Title, Mode=OneWay}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </DockPanel>
+
+                <!-- ===== Step Detail + Screenshot Preview ===== -->
+                <Grid Grid.Column="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="16" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0">
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="手順の詳細"
+                                   FontSize="11"
+                                   Foreground="#FF888888"
+                                   Margin="0,0,0,6" />
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+
+                                <StackPanel Orientation="Horizontal">
+                                    <StackPanel Margin="0,0,48,0">
+                                        <TextBlock Text="順序" FontSize="11" Foreground="#FF888888" />
+                                        <TextBlock x:Name="OrderText" Margin="0,3,0,0" Foreground="#FF333333" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,48,0">
+                                        <TextBlock Text="開始" FontSize="11" Foreground="#FF888888" />
+                                        <TextBlock x:Name="StartMsText" Margin="0,3,0,0" Foreground="#FF333333" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="終了" FontSize="11" Foreground="#FF888888" />
+                                        <TextBlock x:Name="EndMsText" Margin="0,3,0,0" Foreground="#FF333333" />
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,18,0,0">
+                                    <TextBlock Text="タイトル" FontSize="11" Foreground="#FF888888" />
+                                    <TextBlock x:Name="TitleText"
+                                               Margin="0,3,0,0"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FF1F2933"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,18,0,0">
+                                    <TextBlock Text="操作" FontSize="11" Foreground="#FF888888" />
+                                    <TextBlock x:Name="ActionText" Margin="0,3,0,0" Foreground="#FF333333" TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,18,0,0">
+                                    <TextBlock Text="対象" FontSize="11" Foreground="#FF888888" />
+                                    <TextBlock x:Name="TargetText" Margin="0,3,0,0" Foreground="#FF333333" TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,18,0,0">
+                                    <TextBlock Text="説明" FontSize="11" Foreground="#FF888888" />
+                                    <!-- 長文は選択できるよう read-only TextBox を使う（binding は使わず code-behind で設定）。 -->
+                                    <TextBox x:Name="DescriptionText"
+                                             Margin="0,3,0,0"
+                                             Height="64"
+                                             IsReadOnly="True"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             Foreground="#FF333333" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,18,0,0">
+                                    <TextBlock Text="注意" FontSize="11" Foreground="#FF888888" />
+                                    <TextBox x:Name="CautionText"
+                                             Margin="0,3,0,0"
+                                             Height="48"
+                                             IsReadOnly="True"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             Foreground="#FF333333" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,18,0,0">
+                                    <TextBlock Text="期待される結果" FontSize="11" Foreground="#FF888888" />
+                                    <TextBox x:Name="ExpectedResultText"
+                                             Margin="0,3,0,0"
+                                             Height="48"
+                                             IsReadOnly="True"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             Foreground="#FF333333" />
+                                </StackPanel>
+
+                            </StackPanel>
+                        </ScrollViewer>
+                    </DockPanel>
+
+                    <!-- ===== Screenshot Preview ===== -->
+                    <DockPanel Grid.Row="2">
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="スクリーンショット"
+                                   FontSize="11"
+                                   Foreground="#FF888888"
+                                   Margin="0,0,0,6" />
+                        <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White" Height="160">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock x:Name="ScreenshotPlaceholder"
+                                           Foreground="#FF888888"
+                                           HorizontalAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center" />
+                                <TextBlock x:Name="ScreenshotPathText"
+                                           Margin="0,8,0,0"
+                                           FontSize="11"
+                                           Foreground="#FFAAAAAA"
+                                           HorizontalAlignment="Center"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           Visibility="Collapsed" />
+                            </StackPanel>
+                        </Border>
+                    </DockPanel>
+
+                </Grid>
+            </Grid>
+
+        </Grid>
     </Grid>
 </UserControl>

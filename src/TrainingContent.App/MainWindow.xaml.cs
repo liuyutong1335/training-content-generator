@@ -27,7 +27,7 @@ public partial class MainWindow : Window
     // View インスタンスは 1 回だけ生成して使い回す（切替のたびに作り直さない）。
     private readonly HomeView _homeView;
     private readonly RecordingView _recordingView;
-    private readonly ReviewView _reviewView = new();
+    private readonly ReviewView _reviewView;
     private readonly ContentsView _contentsView;
     private readonly RecordingCoordinator _recordingCoordinator;
 
@@ -56,6 +56,10 @@ public partial class MainWindow : Window
 
         _recordingView = new RecordingView(recordingCoordinator, currentProject);
         _recordingView.StatusChanged += OnStatusChanged;
+
+        // Review は Current Project を読み取り専用で表示する（編集は後続 B1）。
+        // 他 View と同じく constructor injection で受け取り、ここで path を組み立てない。
+        _reviewView = new ReviewView(currentProject);
 
         _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator);
         _contentsView.StatusChanged += OnStatusChanged;
