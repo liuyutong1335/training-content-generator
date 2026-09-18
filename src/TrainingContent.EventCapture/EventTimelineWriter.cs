@@ -62,6 +62,52 @@ public sealed class EventTimelineWriter
     {
         _path = path;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        // 既存 events.jsonl への追加開始（re-record 等）では seq を前回の最終値から
+        // 続けて採番する（0 に戻すと契約 §8.1 の Seq start 1 / 単調増加に違反する）。
+        _seq = ReadLastSeq(path);
+    }
+
+    /// <summary>既存ファイルの最終行から seq を読み取る。読めなければ 0（新規開始）。</summary>
+    private static long ReadLastSeq(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return 0;
+            }
+
+            string? last = null;
+            using (var reader = new StreamReader(path))
+            {
+                string? line;
+                while ((line = reader.ReadLine()) is not null)
+                {
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        last = line;
+                    }
+                }
+            }
+
+            if (last is null)
+            {
+                return 0;
+            }
+
+            using var doc = JsonDocument.Parse(last);
+            return doc.RootElement.TryGetProperty("seq", out var seq) && seq.TryGetInt64(out var value)
+                ? value
+                : 0;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
     }
 
     public string FilePath => _path;
