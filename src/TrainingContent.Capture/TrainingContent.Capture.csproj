@@ -17,4 +17,9 @@
     <PackageReference Include="ScreenRecorderLib" Version="6.6.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- staging パス組み立て（RC-2 監査 R-2 対策）の単体テスト用 -->
+    <InternalsVisibleTo Include="TrainingContent.Capture.Tests" />
+  </ItemGroup>
+
 </Project>

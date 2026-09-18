@@ -18,6 +18,10 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     private RecordingState _state = RecordingState.Idle;
     private bool _captureStarted; // 実際の撮影開始（RecorderStatus.Recording）を検出したか
     private TaskCompletionSource<RecordingResult>? _completionSource;
+    // staging パス（RC-2 監査 R-2 対策）: lib には必ずこの一時パスを渡し、
+    // 成功時のみ canonical（options.OutputFilePath）へ置換する。preparation cancel や
+    // 失敗時は canonical を触らないため、再録画時に既存の正常な録画を壊さない
+    private string? _stagingFilePath;
 
     public event EventHandler<RecordingStateChangedEventArgs>? StateChanged;
 
@@ -77,7 +81,10 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         _recorder.OnStatusChanged += OnStatusChanged;
 
         _completionSource = new TaskCompletionSource<RecordingResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _recorder.Record(options.OutputFilePath);
+        // lib へは staging パスを渡す（canonical は成功時の Move で置換 — R-2 対策）。
+        // staging は canonical と同じディレクトリに作る（同一ボリュームで File.Move が確実に機能する）
+        _stagingFilePath = BuildStagingPath(options.OutputFilePath);
+        _recorder.Record(_stagingFilePath);
         _startedAtUtc = DateTimeOffset.UtcNow;
         _captureStarted = false; // OnStatusChanged で Recording になった瞬間（=実際の撮影開始）に時計を合わせる
         State = RecordingState.Recording;
@@ -126,9 +133,12 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
             // 正常に閉じず、0 バイト MP4 がプロセス終了までロック残留する
             // （preparation-cancel-check で実機確認。Recorder.Dispose でも解放されない
             //   ScreenRecorderLib 6.6.0 の制約）。Canonical Timeline はまだ始まっていないため、
-            // Duration = 0 の結果を返す。残留する 0 バイトファイルの削除は呼び出し側に委ねる
-            // （失敗してもcanonical recording ではないため無視してよい）。
+            // Duration = 0 の結果を返す。
+            // 残留する 0 バイトファイルは staging 側に発生する（R-2 対策により canonical は
+            // 触っていない）。削除を試み、ハンドルリークで失敗した場合は無視してよい
+            // （staging 名は次回 StartAsync で再利用されない）。
             DisposeRecorder();
+            TryDeleteStaging();
             State = RecordingState.Idle;
             var aborted = BuildResult(_currentOptions!.OutputFilePath);
             _completionSource?.TrySetResult(aborted);
@@ -236,12 +246,39 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     private void OnRecordingComplete(object? sender, RecordingCompleteEventArgs e)
     {
         State = RecordingState.Idle;
-        _completionSource?.TrySetResult(BuildResult(e.FilePath));
+        var finalPath = _currentOptions!.OutputFilePath;
+        if (_captureStarted && _stagingFilePath is not null)
+        {
+            // 撮影に成功した場合のみ canonical へ置換する（R-2: 再録画時に既存の
+            // 正常な録画を staging で壊さない。同一ボリュームなので Move で原子的に入れ替わる）。
+            // Move が失敗した場合（再生中のロック等）は録画データを失わないよう、
+            // staging パスを保持したまま失敗として完了させる
+            try
+            {
+                File.Move(_stagingFilePath, finalPath, overwrite: true);
+                _stagingFilePath = null;
+            }
+            catch (Exception ex)
+            {
+                _completionSource?.TrySetException(new InvalidOperationException(
+                    $"録画ファイルを {finalPath} へ確定できませんでした（staging に残留: {_stagingFilePath}）: {ex.Message}", ex));
+                return;
+            }
+        }
+        else
+        {
+            // CaptureStarted に到達しないまま完了した場合の保険（通常この経路は StopAsync の
+            // aborted 経路で閉じられる）。staging が残っていれば canonical を壊さないよう削除のみ
+            TryDeleteStaging();
+        }
+
+        _completionSource?.TrySetResult(BuildResult(finalPath));
     }
 
     private void OnRecordingFailed(object? sender, RecordingFailedEventArgs e)
     {
         State = RecordingState.Failed;
+        TryDeleteStaging();
         StateChanged?.Invoke(this, new RecordingStateChangedEventArgs { State = RecordingState.Failed, ErrorMessage = e.Error });
         _completionSource?.TrySetException(new InvalidOperationException($"録画に失敗しました: {e.Error}"));
     }
@@ -280,6 +317,47 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     public void Dispose()
     {
         DisposeRecorder();
+        TryDeleteStaging();
+    }
+
+    /// <summary>
+    /// canonical パスから staging パスを組み立てる（同一ディレクトリ・同一拡張子・
+    /// GUID 付きのため複数 StartAsync や前回残留とも衝突しない）。テスト用に internal。
+    /// </summary>
+    internal static string BuildStagingPath(string canonicalPath)
+    {
+        var dir = Path.GetDirectoryName(canonicalPath) ?? string.Empty;
+        var name = Path.GetFileNameWithoutExtension(canonicalPath);
+        var ext = Path.GetExtension(canonicalPath);
+        return Path.Combine(dir, $"{name}.staging-{Guid.NewGuid():N}{ext}");
+    }
+
+    /// <summary>staging ファイルの後片付け（冪等・失敗は無視 = 既知の lib ハンドルリーク）。</summary>
+    private void TryDeleteStaging()
+    {
+        if (_stagingFilePath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (File.Exists(_stagingFilePath))
+            {
+                File.Delete(_stagingFilePath);
+            }
+
+            _stagingFilePath = null;
+        }
+        catch (IOException)
+        {
+            // ハンドルが解放されない（0 バイト残留 = preparation cancel 経路の既知の lib 制約）。
+            // canonical recording ではないため無視してよい。次回 StartAsync では別名を使う
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // 同上
+        }
     }
 
     /// <summary>Recorder を解放し、イベント購読を解除する（冪等）。</summary>
