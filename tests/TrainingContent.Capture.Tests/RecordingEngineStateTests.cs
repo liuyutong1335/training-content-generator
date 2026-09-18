@@ -35,4 +35,29 @@ public class RecordingEngineStateTests
         };
         Assert.Empty(result.PauseIntervals);
     }
+
+    [Fact]
+    public void BuildStagingPath_SameDirectory_SameExtension_UniqueName()
+    {
+        var canonical = Path.Combine("raw", "recording.mp4");
+        var staging1 = ScreenRecorderRecordingEngine.BuildStagingPath(canonical);
+        var staging2 = ScreenRecorderRecordingEngine.BuildStagingPath(canonical);
+
+        // 同一ディレクトリ（同一ボリューム）で File.Move が機能する配置であること
+        Assert.Equal(Path.GetDirectoryName(canonical), Path.GetDirectoryName(staging1));
+        // 拡張子を保つ（lib が MP4 シンクを拡張子で決めるため）
+        Assert.Equal(".mp4", Path.GetExtension(staging1));
+        // canonical 名そのもの・既存 staging と衝突しない
+        Assert.NotEqual(canonical, staging1);
+        Assert.NotEqual(staging1, staging2);
+        Assert.Contains(".staging-", Path.GetFileName(staging1));
+    }
+
+    [Fact]
+    public void BuildStagingPath_NoDirectory_Works()
+    {
+        var staging = ScreenRecorderRecordingEngine.BuildStagingPath("recording.mp4");
+        Assert.EndsWith(".mp4", staging, StringComparison.Ordinal);
+        Assert.Contains(".staging-", staging);
+    }
 }

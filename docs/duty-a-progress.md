@@ -200,3 +200,18 @@ D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材�
   （MP4 と Engine 論理 Duration の差 0.28s / 0.32s）。なお負荷が高い環境ではこの差が
   ~1.1s まで膨らみ ±1s 判定を超過する実機観測がある（2026-09-17 17:43 / 17:44 の 2 回）。
   判定の再現性確認の際は機器負荷に注意すること。
+- **追記（2026-09-18・R-2 対策の staging 録画を実装）**: 総合監査（`docs/audit-2026-09-18.md` §4 指摘 3）と
+  D 側確認（RC-2 により preparation 中 Stop が UI から到達可能になった）を受け、エンジンを変更。
+  - lib へは canonical（`options.OutputFilePath`）でなく **staging パス**（同一ディレクトリ・同一拡張子・
+    GUID 付き `<name>.staging-<guid><ext>`）を渡す。**撮影成功時（CaptureStarted 後の完了）のみ
+    `File.Move(overwrite: true)` で canonical へ置換**し、`RecordingResult.FilePath` は常に canonical を返す
+  - preparation cancel / 録画失敗時は staging の削除を試みるのみで **canonical を一切触らない** →
+    再録画時に既存の正常な録画を壊さない。0 バイト残留（既知の lib ハンドルリーク）は staging 側に
+    発生するため、canonical には現れない（次回 StartAsync は別名を使うため衛突しない）
+  - Move 失敗時（完成 MP4 が視聴中でロックされる等）は録画データを失わないよう staging を残して
+    失敗として完了させる（エラーメッセージに staging パスを含む）
+  - 呼び出し側（D の Coordinator 等）の変更は不要。実機検証: preparation-cancel-check 全 5 項目 PASS
+    （判定 3 は「canonical にファイルが生成されなかった」に改善）・capture-started-check 全 4 項目 PASS・
+    integration-smoke 全 4 項目 PASS（差 7ms）。
+    **監査残留リスク R-1 も同時に再検証済み** — 現行エンジン（staging + 完了後 Move）での
+    通常停止直後の canonical MP4 はロックなし（preparation-cancel-check 判定 5）
