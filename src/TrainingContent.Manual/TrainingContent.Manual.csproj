@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Manual Generator（docs/development-plan.md §19、phase0-contract.md §16 / §17 / §28）。
+       入力は TrainingProject のみ（Raw Event を直接参照しない）。
+       Markdown / HTML の生成内容を返すところまでを担当し、保存・ファイル書き込み・
+       ProjectOutputs 更新は担当D（Storage / ProjectStore）が行う。
+       TrainingProject は変更しない。 -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TrainingContent.Core\TrainingContent.Core.csproj" />
+  </ItemGroup>
+
+</Project>

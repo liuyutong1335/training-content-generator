@@ -14,6 +14,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.EventCaptur
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.EventCapture.Tests", "tests\TrainingContent.EventCapture.Tests\TrainingContent.EventCapture.Tests.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E06}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Manual", "src\TrainingContent.Manual\TrainingContent.Manual.csproj", "{C71C1F27-E3D3-40C4-AB2C-170E8CC02B7F}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Manual.Tests", "tests\TrainingContent.Manual.Tests\TrainingContent.Manual.Tests.csproj", "{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Video", "src\TrainingContent.Video\TrainingContent.Video.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Video.Tests", "tests\TrainingContent.Video.Tests\TrainingContent.Video.Tests.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E08}"
@@ -23,6 +27,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrainingContent.Storage", "src\TrainingContent.Storage\TrainingContent.Storage.csproj", "{25FA4234-141E-43D1-9B52-CAEE195BECF7}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrainingContent.Storage.Tests", "tests\TrainingContent.Storage.Tests\TrainingContent.Storage.Tests.csproj", "{68419612-EF4B-4A0E-82C4-C30892FB7B0C}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Screenshot", "src\TrainingContent.Screenshot\TrainingContent.Screenshot.csproj", "{516BC64C-0A51-4EA3-B2E4-7AACE344799B}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.Screenshot.Tests", "tests\TrainingContent.Screenshot.Tests\TrainingContent.Screenshot.Tests.csproj", "{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PreparationCancelCheck", "spike\preparation-cancel-check\PreparationCancelCheck.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}"
 EndProject
@@ -58,6 +66,14 @@ Global
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E06}.Debug|x64.Build.0 = Debug|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E06}.Release|x64.ActiveCfg = Release|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E06}.Release|x64.Build.0 = Release|x64
+		{C71C1F27-E3D3-40C4-AB2C-170E8CC02B7F}.Debug|x64.ActiveCfg = Debug|x64
+		{C71C1F27-E3D3-40C4-AB2C-170E8CC02B7F}.Debug|x64.Build.0 = Debug|x64
+		{C71C1F27-E3D3-40C4-AB2C-170E8CC02B7F}.Release|x64.ActiveCfg = Release|x64
+		{C71C1F27-E3D3-40C4-AB2C-170E8CC02B7F}.Release|x64.Build.0 = Release|x64
+		{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}.Debug|x64.ActiveCfg = Debug|x64
+		{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}.Debug|x64.Build.0 = Debug|x64
+		{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}.Release|x64.ActiveCfg = Release|x64
+		{267DEC6A-3F3C-49A5-A32B-2545A68DBD6E}.Release|x64.Build.0 = Release|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}.Debug|x64.ActiveCfg = Debug|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}.Debug|x64.Build.0 = Debug|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E07}.Release|x64.ActiveCfg = Release|x64
@@ -78,6 +94,14 @@ Global
 		{68419612-EF4B-4A0E-82C4-C30892FB7B0C}.Debug|x64.Build.0 = Debug|x64
 		{68419612-EF4B-4A0E-82C4-C30892FB7B0C}.Release|x64.ActiveCfg = Release|x64
 		{68419612-EF4B-4A0E-82C4-C30892FB7B0C}.Release|x64.Build.0 = Release|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Debug|x64.ActiveCfg = Debug|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Debug|x64.Build.0 = Debug|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Release|x64.ActiveCfg = Release|x64
+		{516BC64C-0A51-4EA3-B2E4-7AACE344799B}.Release|x64.Build.0 = Release|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Debug|x64.ActiveCfg = Debug|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Debug|x64.Build.0 = Debug|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Release|x64.ActiveCfg = Release|x64
+		{2E67B34E-4FFD-4E18-A1F7-4F5650D3D1C8}.Release|x64.Build.0 = Release|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Debug|x64.ActiveCfg = Debug|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Debug|x64.Build.0 = Debug|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Release|x64.ActiveCfg = Release|x64
