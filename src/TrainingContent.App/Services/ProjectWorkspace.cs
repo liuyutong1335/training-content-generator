@@ -86,6 +86,37 @@ public sealed class ProjectWorkspace
     }
 
     /// <summary>
+    /// Step の ScreenshotPath を差し替える（Redaction / Screenshot replacement）。
+    /// Current Project を更新した場合は Current Project も最新 snapshot へ差し替える
+    /// （Home に古い Screenshot / Revision が残らないようにするため）。
+    ///
+    /// <para>
+    /// Current Project の差し替えは <b>Storage の保存が成功した後</b>だけ行う。
+    /// Storage が投げた場合はここへ到達しないため、Current Project は旧状態のまま残る。
+    /// 別 Project を更新しても Current Project は上書きしない（identity guard）。
+    /// </para>
+    /// <para>
+    /// Revision の増加と no-op 判定は Storage 側の責務で、ここでは操作しない。
+    /// </para>
+    /// </summary>
+    public async Task<TrainingProject> UpdateStepScreenshotAsync(
+        Guid id,
+        Guid stepId,
+        string screenshotPath,
+        CancellationToken cancellationToken = default)
+    {
+        var updated = await _projectStore
+            .UpdateStepScreenshotAsync(id, stepId, screenshotPath, cancellationToken);
+
+        if (_currentProject.IsCurrent(id))
+        {
+            _currentProject.SetCurrent(updated);
+        }
+
+        return updated;
+    }
+
+    /// <summary>
     /// 削除する。Current Project を削除した場合のみ Current Project を解除する
     /// （別 Project の削除では維持）。
     /// </summary>

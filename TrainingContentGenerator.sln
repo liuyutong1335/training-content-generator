@@ -26,6 +26,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TrainingContent.Storage.Tes
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "PreparationCancelCheck", "spike\preparation-cancel-check\PreparationCancelCheck.csproj", "{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TrainingContent.App.Tests", "tests\TrainingContent.App.Tests\TrainingContent.App.Tests.csproj", "{8A3F5C21-7D4B-4E96-9F2A-6B1C8D3E5A47}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -80,6 +82,10 @@ Global
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Debug|x64.Build.0 = Debug|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Release|x64.ActiveCfg = Release|x64
 		{6F9A2C71-8B34-4E1D-9C45-1A2B3C4D5E09}.Release|x64.Build.0 = Release|x64
+		{8A3F5C21-7D4B-4E96-9F2A-6B1C8D3E5A47}.Debug|x64.ActiveCfg = Debug|x64
+		{8A3F5C21-7D4B-4E96-9F2A-6B1C8D3E5A47}.Debug|x64.Build.0 = Debug|x64
+		{8A3F5C21-7D4B-4E96-9F2A-6B1C8D3E5A47}.Release|x64.ActiveCfg = Release|x64
+		{8A3F5C21-7D4B-4E96-9F2A-6B1C8D3E5A47}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

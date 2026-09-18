@@ -287,6 +287,70 @@ public sealed class ProjectStore
     }
 
     // ---------------------------------------------------------------------
+    // Step screenshot
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Step の <see cref="TrainingStep.ScreenshotPath"/> を差し替える
+    /// （Screenshot Redaction / Screenshot replacement の Storage 側 mutation）。
+    ///
+    /// <para>
+    /// ScreenshotPath は teaching content の一部なので、値が実際に変わったときだけ
+    /// <see cref="TrainingProject.Revision"/> を進める（Contract §16）。
+    /// 「新しい ScreenshotPath + 古い Revision」を永続化しないため、path 更新と Revision++ は
+    /// 1 回の <see cref="SaveProjectAsync"/> にまとめる。保存に失敗した場合、canonical な
+    /// project.json は旧状態のまま残る（<see cref="SaveProjectAsync"/> が temp 経由で置換する）。
+    /// </para>
+    /// <para>
+    /// 対象 Step は <see cref="TrainingStep.Id"/> で特定する。Order は並べ替えで変わるため
+    /// lookup key にしない。
+    /// </para>
+    /// </summary>
+    /// <returns>更新後の Project。同じ path の再指定だった場合は保存せず、読み込んだ Project をそのまま返す。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="screenshotPath"/> が null。</exception>
+    /// <exception cref="ArgumentException"><paramref name="screenshotPath"/> が blank、または Project-relative path でない。</exception>
+    /// <exception cref="ProjectStoreException">Project または Step が見つからない。</exception>
+    /// <remarks>
+    /// <b>保存（<see cref="SaveProjectAsync"/>）の失敗は <see cref="ProjectStoreException"/> ではない。</b>
+    /// temp 書込み / 置換の失敗は基盤の filesystem 例外
+    /// （<see cref="System.IO.IOException"/> / <see cref="System.UnauthorizedAccessException"/> 等）が
+    /// そのまま伝播する。呼出側で「保存失敗」を捕捉するときは
+    /// <see cref="System.IO.IOException"/> だけに限定しないこと
+    /// （共有違反時の <c>File.Move(overwrite: true)</c> は
+    /// <see cref="System.UnauthorizedAccessException"/> を返す）。
+    /// </remarks>
+    public async Task<TrainingProject> UpdateStepScreenshotAsync(
+        Guid id,
+        Guid stepId,
+        string screenshotPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(screenshotPath);
+
+        // 入力の検査は disk に触る前に行う（不正な path で project.json を読まない）。
+        ValidateProjectRelativePath(ProjectDirectory(id), screenshotPath);
+
+        var project = await LoadProjectAsync(id, cancellationToken).ConfigureAwait(false)
+            ?? throw new ProjectStoreException($"Project が見つかりません: {id:D}");
+
+        var step = project.Steps.FirstOrDefault(s => s.Id == stepId)
+            ?? throw new ProjectStoreException($"Step が見つかりません: {stepId:D} (Project {id:D})");
+
+        // 同じ値の再指定は no-op。Revision も UpdatedAtUtc も動かさず、保存もしない。
+        if (string.Equals(step.ScreenshotPath, screenshotPath, StringComparison.Ordinal))
+        {
+            return project;
+        }
+
+        step.ScreenshotPath = screenshotPath;
+        project.Revision++;
+        project.UpdatedAtUtc = DateTimeOffset.UtcNow;
+
+        await SaveProjectAsync(project, cancellationToken).ConfigureAwait(false);
+        return project;
+    }
+
+    // ---------------------------------------------------------------------
     // Delete
     // ---------------------------------------------------------------------
 
@@ -332,6 +396,58 @@ public sealed class ProjectStore
     }
 
     private string ProjectFilePath(Guid id) => Path.Combine(ProjectDirectory(id), ProjectFileName);
+
+    /// <summary>
+    /// Contract §18 Path Rule に加え、解決結果が必ず Project directory 配下に閉じることを検査する。
+    ///
+    /// <para>
+    /// 共有 <see cref="ProjectValidator"/> の path 検査は絶対パスと <c>\</c> のみを見ており、
+    /// leading <c>/</c> と <c>..</c> を検査しない（既知の穴）。永続化する側で二重に防ぐ。
+    /// </para>
+    /// </summary>
+    private static void ValidateProjectRelativePath(string projectDirectory, string relativePath)
+    {
+        ArgumentException Invalid(string reason) =>
+            new($"ScreenshotPath が Project-relative path ではありません（{reason}）: {relativePath}",
+                nameof(relativePath));
+
+        if (Path.IsPathRooted(relativePath) || relativePath.StartsWith('/') || relativePath.StartsWith('\\'))
+        {
+            throw Invalid("絶対パス / rooted path は禁止");
+        }
+
+        if (relativePath.Length >= 2 && relativePath[1] == ':')
+        {
+            throw Invalid("drive 指定は禁止");
+        }
+
+        if (relativePath.Contains('\\'))
+        {
+            throw Invalid(@"区切りは / に統一すること");
+        }
+
+        foreach (var segment in relativePath.Split('/'))
+        {
+            if (segment.Length == 0 || segment is "." or "..")
+            {
+                throw Invalid(@"空 / . / .. の segment は禁止");
+            }
+        }
+
+        // 二重の防御: 実際に解決して Project directory 配下であることを確認する。
+        var root = Path.GetFullPath(projectDirectory);
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+
+        var resolved = Path.GetFullPath(
+            Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+        if (!resolved.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw Invalid("Project directory の外を指している");
+        }
+    }
 
     /// <summary>
     /// 録画 Engine へ渡す出力先の絶対パス（Contract §17: <c>raw/recording.mp4</c>）。
