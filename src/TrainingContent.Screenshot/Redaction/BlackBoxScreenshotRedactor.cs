@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Security;
 
 namespace TrainingContent.Screenshot.Redaction;
@@ -168,9 +169,10 @@ public sealed class BlackBoxScreenshotRedactor : IScreenshotRedactor
                 AppliedRegionCount = regions.Count,
             };
         }
-        catch (Exception ex) when (IsIoOrAccessException(ex))
+        catch (Exception ex) when (IsIoOrAccessException(ex) || ex is ExternalException)
         {
-            // 描画・保存で投げられうる file / 権限系の例外のみ Result 化する。
+            // 描画・temp PNG 保存の失敗を Result 化する。GDI+ は通常の processing 失敗を
+            // ExternalException で投げることがある（呼出側へ fault として漏らさない）。
             // OutOfMemoryException 等の致命的例外はここでは捕捉しない（decode の局所範囲のみで扱う）。
             // path 実値・exception message は出さない。
             return Failure("OutputPath へPNGを生成できません。");
@@ -230,9 +232,10 @@ public sealed class BlackBoxScreenshotRedactor : IScreenshotRedactor
             // Bitmap(Stream) は stream を保持しうるため、独立した copy を作ってから stream を閉じる。
             return new Bitmap(decoded);
         }
-        catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException or IOException or NotSupportedException)
+        catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException or IOException or NotSupportedException or ExternalException)
         {
-            // GDI+ は不正画像で ArgumentException / OutOfMemoryException を投げる（decode 周辺に限定）。
+            // GDI+ は不正画像で ArgumentException / OutOfMemoryException / ExternalException を投げる
+            // （decode 周辺に限定。ここ以外で OutOfMemoryException は捕捉しない）。
             return null;
         }
     }
