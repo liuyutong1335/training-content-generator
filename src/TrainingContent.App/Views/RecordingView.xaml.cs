@@ -146,10 +146,21 @@ public partial class RecordingView : UserControl
         PauseButton.IsEnabled = state == RecordingState.Recording && canOperate;
         ResumeButton.IsEnabled = state == RecordingState.Paused && canOperate;
 
-        // EventCapture が失敗して Engine だけ Recording / Paused に残った場合も、
-        // ユーザーが終了できるよう Stop は残す。
+        // preparation 中（Engine は Recording だが CaptureStarted 前）も停止できるようにする。
+        // 従来は (ready || faulted) を要求していたため、CaptureStarted が届くまでの間
+        // （通常約 1.5 秒）ユーザーが録画準備から脱出できなかった（RC-2）。
+        //
+        // pre-CaptureStarted の Stop は A 側 main 実装で Duration = 0 の cancel として確定する
+        // （watchdog 不要・CaptureStarted 待ち不要。docs/duty-a-progress.md §9）。
+        //
+        // 受理条件は Coordinator の StopAsync（IsSessionActive かつ !_isStopFinalizing）と揃える:
+        //   - finalization 中は StopAsync が _isCommandRunning を立てるので busy が弾く
+        //   - Engine が Idle へ戻った後の finalization 残窓は state が Recording / Paused でないため弾く
+        //   - StartAsync in-flight は state がまだ Idle で IsSessionActive も false のため対象外
+        //     （この間は navigation / close が許可されており脱出不能ではない）
+        //   - EventCapture 故障時も state は Recording / Paused に残るため従来どおり停止できる
         StopButton.IsEnabled =
-            state is RecordingState.Recording or RecordingState.Paused && !busy && (ready || faulted);
+            state is RecordingState.Recording or RecordingState.Paused && !busy;
 
         // 録画中は device を変更させない（選択と実際の録音対象が食い違わないように）。
         var devicesEnabled = idle && !_devicesFailed;
