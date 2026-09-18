@@ -280,12 +280,18 @@ public class StepBuilderErrorTests
     public void ScreenshotPath_IsNotAutoCorrected()
     {
         const string invalid = "screenshots\\original\\event.png";
-        var result = StepBuilder.Build(TimelineEventFactory.Single(
-            EventTypes.MouseClick, """{"x":1,"y":2,"screenshotPath":"screenshots\\original\\event.png"}"""));
+        var payload = "{\"x\":1,\"y\":2,\"screenshotPath\":\"" + invalid.Replace("\\", "\\\\") + "\"}";
 
-        // 自動修正せず、Error として元の値をそのまま報告する（Step も生成しない）。
+        var result = StepBuilder.Build(TimelineEventFactory.Single(EventTypes.MouseClick, payload));
+
+        // '/' 形式へ自動修正した Step を作らない（Step も生成しない）。理由は Error として報告する。
         Assert.Empty(result.Steps);
-        Assert.Contains(result.Errors, error => error.Contains(invalid, StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains("screenshotPath", StringComparison.Ordinal)
+            && error.Contains("パス区切り", StringComparison.Ordinal));
+
+        // 受け取った path 全文は Error に含めない（drive letter・ユーザー名・server/share・
+        // ローカルディレクトリ・ファイル名を漏らさないため）。
+        Assert.DoesNotContain(result.Errors, error => error.Contains(invalid, StringComparison.Ordinal));
     }
 
     [Theory]
@@ -301,7 +307,8 @@ public class StepBuilderErrorTests
         var result = StepBuilder.Build(TimelineEventFactory.Single(EventTypes.MouseClick, payload));
 
         Assert.Empty(result.Steps);
-        Assert.Contains(result.Errors, error => error.Contains(path, StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains("screenshotPath", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Errors, error => error.Contains(path, StringComparison.Ordinal));
     }
 
     [Theory]
@@ -330,8 +337,55 @@ public class StepBuilderErrorTests
 
         // 正規化して "secret.png" に直したり、Project 外を指す値をそのまま採用したりしない。
         Assert.Empty(result.Steps);
-        Assert.Contains(result.Errors, error => error.Contains(traversal, StringComparison.Ordinal));
-        Assert.DoesNotContain(result.Errors, error => error.Contains("secret.png", StringComparison.Ordinal) && !error.Contains(traversal, StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains("セグメント", StringComparison.Ordinal));
+
+        // 元の path も、正規化後の名前も Error に出さない。
+        Assert.DoesNotContain(result.Errors, error => error.Contains(traversal, StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Errors, error => error.Contains("secret.png", StringComparison.Ordinal));
+    }
+
+    // --- path 非漏洩: screenshotPath の Error に path 実値を含めない ---
+    // 断片はテスト専用の dummy 名であり、実在の人物名・server 名・share 名ではない。
+
+    private static readonly string[] ForbiddenPathFragments =
+    [
+        "yamada", "fileserver", "share01", "localuser", "private",
+        "secret.png", "event.png", @"C:\", @"\\", "/home/",
+    ];
+
+    [Theory]
+    [InlineData(@"C:\Users\yamada\private\event.png", "絶対パス")]
+    [InlineData(@"\\fileserver\share01\private\event.png", "絶対パス")]
+    [InlineData(@"screenshots\original\event.png", "パス区切り")]
+    [InlineData("../secret.png", "セグメント")]
+    [InlineData("screenshots/../secret.png", "セグメント")]
+    [InlineData("/home/localuser/private/event.png", "絶対パス")]
+    public void ScreenshotPathError_DoesNotLeakPathValue(string path, string expectedReason)
+    {
+        var payload = "{\"x\":1,\"y\":2,\"screenshotPath\":\"" + path.Replace("\\", "\\\\") + "\"}";
+        var timelineEvent = TimelineEventFactory.Create(EventTypes.MouseClick, seq: 1, timestampMs: 1000, payloadJson: payload);
+        var payloadBefore = timelineEvent.Payload.GetRawText();
+
+        var result = StepBuilder.Build([timelineEvent]);
+
+        Assert.True(result.HasErrors);
+        Assert.Empty(result.Steps);
+
+        // field 名と理由（および event type / seq の label）は残し、利用者が修正箇所を特定できるようにする。
+        Assert.Contains(result.Errors, error => error.Contains("screenshotPath", StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains(expectedReason, StringComparison.Ordinal));
+        Assert.Contains(result.Errors, error => error.Contains(EventTypes.MouseClick, StringComparison.Ordinal));
+
+        // path 実値（drive letter・ユーザー名・server/share・ディレクトリ・ファイル名）は含めない。
+        Assert.DoesNotContain(result.Errors, error => error.Contains(path, StringComparison.Ordinal));
+        Assert.All(ForbiddenPathFragments, fragment =>
+            Assert.DoesNotContain(result.Errors, error => error.Contains(fragment, StringComparison.Ordinal)));
+
+        // 入力 Event / payload は変更しない（Raw Event を書き換えない）。
+        Assert.Equal(payloadBefore, timelineEvent.Payload.GetRawText());
+        Assert.Equal(EventTypes.MouseClick, timelineEvent.Type);
+        Assert.Equal(1, timelineEvent.Seq);
+        Assert.Equal(1000, timelineEvent.TimestampMs);
     }
 
     [Fact]

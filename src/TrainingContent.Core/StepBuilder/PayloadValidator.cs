@@ -143,6 +143,8 @@ public static partial class PayloadValidator
     /// <summary>
     /// screenshotPath（契約 §10 / §18）: mouse 系 payload 専用。存在する場合のみ検証し、自動修正しない。
     /// 非 mouse Event では呼び出さない（未知の追加フィールドとして無視する）。
+    /// Error 文言には field 名・理由・event type / seq のみを含め、受け取った path 全文は含めない
+    /// （drive letter・ユーザー名・server/share・ローカルディレクトリ・ファイル名を漏らさないため）。
     /// </summary>
     private static void ValidateScreenshotPath(JsonElement payload, string label, List<string> errors)
     {
@@ -164,15 +166,15 @@ public static partial class PayloadValidator
         }
         else if (IsAbsolutePath(path))
         {
-            errors.Add($"payload の 'screenshotPath' に絶対パスは保存できない（Project-relative にする）: {path}（{label}）。");
+            errors.Add($"payload の 'screenshotPath' に絶対パスは保存できない（Project-relative にする、{label}）。");
         }
         else if (path.Contains('\\'))
         {
-            errors.Add($"payload の 'screenshotPath' のパス区切りは {PosixSeparator} に統一すること: {path}（{label}）。");
+            errors.Add($"payload の 'screenshotPath' のパス区切りは {PosixSeparator} に統一すること（{label}）。");
         }
         else if (HasTraversalSegment(path))
         {
-            errors.Add($"payload の 'screenshotPath' に '{DotSegment}' / '{DotDotSegment}' のパスセグメントは使用できない（Project 外を参照しない）: {path}（{label}）。");
+            errors.Add($"payload の 'screenshotPath' に '{DotSegment}' / '{DotDotSegment}' のパスセグメントは使用できない（Project 外を参照しない、{label}）。");
         }
     }
 
