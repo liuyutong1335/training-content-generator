@@ -29,3 +29,30 @@
 
 - ScreenRecorderLib v6.6.0 は マイク(Input) + システム音声(Output) を**同一音声トラックにミックス**する
 - 独立トラックで管理したい場合（NessStudio 方式）は raw 構成の変更（Breaking Change）になるため、必要なら早期に契約変更手順（§27）を使うこと
+
+## 5. 録画準備中の Cancel と EventCapture の cleanup（RC-2 決め / 2026-09-17 B 回答）
+
+D より提示のあった「Capture preparation 中の Cancel」について、`OperationCaptureSession` の
+cleanup semantics は次のとおり。判定用に **`IsRecording` プロパティを追加済み**（次の B の PR に同梱）。
+
+- **状態別の cleanup（確認事項 1 への回答）**:
+  - **Start 前**: セッションは何も生成していない（スレッド / フック / ディレクトリも作らない）。
+    `Dispose()` のみで完全。`Stop()` は `InvalidOperationException` を投げる
+  - **Start 失敗**: Start 内で例外安全に後片付け済み（フック解除 / ワーカー停止 / `_writer = null` で以後の書き込み不能）。
+    セッションは再利用不可。呼び出し側は `Dispose()` のみ呼べばよい
+  - **正常 Stop**: フック停止 → drain → textEntry flush → `recording.stopped` 終端 → durationMs 返却。
+    以後 1 セッション = 1 録画（再利用不可）
+- **CaptureStarted 前・`session.Start()` 未実行なら（確認事項 2 への回答）**:
+  **Stop ではなく Dispose が正しい**。目安として `session.IsRecording` が false のときは Dispose 経由
+- **recording.started 前/後の差（確認事項 3 への回答）**:
+  `recording.started` は `Start()` の最終ステップで書かれるため、**Start() が例外なく戻った時点で必ず存在する**。
+  外部から観測できる境界は「Start() が正常に戻ったか」それ以降はそれ以前という区別でよい。
+  started を書けずに失敗した場合、そのセッションの events.jsonl は契約 §20 のライフサイクル構造を
+  満たさない（canonical artifact にしないこと）
+- **Cancel 時に artifacts を残さない前提（確認事項 4 への回答）**: EventCapture 側は問題なし。
+  書き込み先はすべて `ProjectDirectory` 配下（events.jsonl / screenshots/original/）で、
+  プロセス横断の状態は持たない。注意は 2 点:
+  - **削除は Stop / Dispose の後で行う**（セッション生存中の削除は書き込み例外の原因になる。
+    writer は書き込みの都度 open/close するため、Dispose 後は EventCapture 自身がハンドルを掴まない）
+  - Start 失敗や cancel で不完全になった events.jsonl は canonical と見なさず削除してよい
+    （MP4 など Engine 側成果物の取り扱いは A/D 管轄）

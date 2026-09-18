@@ -36,17 +36,24 @@ MIT のコードをコピー・改変した場合も、著作権表示および�
 
 - Repository: https://github.com/ebanez8/openstep
 - License: MIT License
-- Copyright: Copyright (c) 2025 ebanez8 (リポジトリ LICENSE より。正式表記は LICENSE ファイルを確認すること)
+- Copyright: Copyright (c) 2026 OpenSteps contributors（リポジトリ LICENSE の実文どおり。2026-09-17 時点の clone で確認）
 - 利用範囲: Global Mouse/Keyboard Hook、UI Automation、Screenshot の部分移植（fork はしない）
-- コピー/参考ファイル: `spike/operation-capture/` に移植
-  - `Hooks/NativeMethods.cs` — src/OpenSteps.Capture/NativeMethods.cs をコピー（スパイクで使用する P/Invoke のみ残す）
-  - `Hooks/GlobalMouseHook.cs` — src/OpenSteps.Capture/GlobalMouseHook.cs + ClickCapturedEventArgs.cs をコピー（SpikeClickType に置換）
-  - `Hooks/GlobalKeyboardHook.cs` — src/OpenSteps.Capture/GlobalKeyboardHook.cs + KeyboardInputEventArgs.cs をコピー（特殊キー名を契約 §11.2 の表記に合わせた）
-  - `UiAutomation/UiAutomationService.cs` — src/OpenSteps.Capture/UiAutomationService.cs をコピー（namespace 変更のみ）
-  - `UiAutomation/UiElementInfo.cs` — src/OpenSteps.Core/Models/UiElementInfo.cs をコピー
-  - `Screenshot/ScreenshotCapture.cs` — src/OpenSteps.Capture/DpiAwarenessService.cs の Per-Monitor V2 スレッド切替方式を参考
-  - `WindowInfoService.cs` — src/OpenSteps.Capture/ActiveWindowService.cs を参考に最小化
-  - `ScreenshotCapture.cs` — src/OpenSteps.Capture/ScreenshotService.cs を参考に最小化
+- スパイク（`spike/operation-capture/`）と出荷コード（`src/TrainingContent.EventCapture/`）は同源。
+  出荷コード基準での帰属対象は次の 7 ファイル:
+  - 明示 Ported（upstream からのコピー・改変）: 5 件
+    - `Hooks/NativeMethods.cs` — src/OpenSteps.Capture/NativeMethods.cs をコピー（使用する P/Invoke のみ残す）
+    - `Hooks/GlobalMouseHook.cs` — src/OpenSteps.Capture/GlobalMouseHook.cs + ClickCapturedEventArgs.cs をコピー
+    - `Hooks/GlobalKeyboardHook.cs` — src/OpenSteps.Capture/GlobalKeyboardHook.cs + KeyboardInputEventArgs.cs をコピー
+    - `UiAutomation/UiAutomationService.cs` — src/OpenSteps.Capture/UiAutomationService.cs をコピー
+    - `UiAutomation/UiElementInfo.cs` — src/OpenSteps.Core/Models/UiElementInfo.cs をコピー
+  - 翻案（upstream コードを改変・転用した derivative。attribution 必要）: 2 件
+    - `WindowInfo/WindowInfoService.cs` — src/OpenSteps.Capture/ActiveWindowService.cs の翻案
+      （GetTitle / プロセス解決の実装を引き継ぎ、FromPoint・シェルウィンドウ フォールバック等を追加）
+    - `Screenshot/ScreenshotCapture.cs` — src/OpenSteps.Capture/ScreenshotService.cs および
+      DpiAwarenessService.cs の翻案（CopyFromScreen + クリック ハイライトの実装を引き継ぎ、
+      仮想デスクトップ 1 モードに最小化。DPI コンテキスト切替は同リポジトリの NativeMethods パターンによる）
+  - 上記のほか、設計のみを参考にした独自実装（attribution 不要扱い）: EventTimelineWriter / MasterClock /
+    TextEntryAggregator / OperationCaptureSession は OpenSteps に存在しない本プロジェクト独自の実装
 - 参照 Commit SHA: 8058980865ac07f261b97b7270776c486b942a16
 - 改変: namespace 変更、OpenSteps.Core モデル依存の削除、キー名表記の契約合わせ、不要機能（Redaction/複数モード等）の削減
 
@@ -54,8 +61,9 @@ MIT のコードをコピー・改変した場合も、著作権表示および�
 
 - Repository: https://github.com/micilini/NessStudio
 - License: MIT License
-- Copyright: （記録）
-- 利用範囲: アーキテクチャ参考のみ（コードは利用しない）
+- Copyright: Copyright (c) 2026 Micilini Roll（リポジトリ LICENSE の実文どおり。2026-09-17 に raw LICENSE で確認）
+- 利用範囲: アーキテクチャ参考のみ（コードは利用しない）。redistributed third-party code ではないため
+  参考資料扱い（本セクションは謝辞としての記録）
 - 改変: なし
 
 ## Microsoft Skill Recorder
