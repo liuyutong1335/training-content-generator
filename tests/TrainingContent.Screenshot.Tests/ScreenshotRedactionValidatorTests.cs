@@ -508,6 +508,68 @@ public class ScreenshotRedactionValidatorTests
         Assert.Null(exception);
     }
 
+    // --- 既存 Output の保護（C3-2） ---
+
+    [Fact]
+    public void ExistingOutputFile_IsError()
+    {
+        using var workspace = ScreenshotTestData.CreateWorkspace();
+        var source = workspace.CreateDummyPng("source.png");
+        var output = workspace.CreateDummyPng("output.png");
+        var before = ScreenshotTestData.ReadBytes(output);
+
+        var result = ScreenshotRedactionValidator.Validate(
+            Request(source, output, new RedactionRectangle(1, 1, 2, 2)),
+            ImageWidth,
+            ImageHeight);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Errors, error => error.Contains("未使用のファイル", StringComparison.Ordinal));
+        Assert.Empty(result.NormalizedRegions);
+        // 既存 Output を削除・上書き・rename しない
+        Assert.True(File.Exists(output));
+        Assert.Equal(before, ScreenshotTestData.ReadBytes(output));
+    }
+
+    [Fact]
+    public void ExistingOutputDirectory_IsError()
+    {
+        using var workspace = ScreenshotTestData.CreateWorkspace();
+        var source = workspace.CreateDummyPng("source.png");
+        var output = workspace.PathIn("output.png");
+        Directory.CreateDirectory(output);
+
+        var result = ScreenshotRedactionValidator.Validate(
+            Request(source, output, new RedactionRectangle(1, 1, 2, 2)),
+            ImageWidth,
+            ImageHeight);
+
+        Assert.True(result.HasErrors);
+        Assert.Contains(result.Errors, error => error.Contains("未使用のファイル", StringComparison.Ordinal));
+        Assert.Empty(result.NormalizedRegions);
+        Assert.True(Directory.Exists(output));
+    }
+
+    [Fact]
+    public void ExistingOutputFile_ErrorMessageDoesNotLeakPath()
+    {
+        using var workspace = ScreenshotTestData.CreateWorkspace();
+        var source = workspace.CreateDummyPng("source.png");
+        var output = workspace.CreateDummyPng("existing-output.png");
+
+        var result = ScreenshotRedactionValidator.Validate(
+            Request(source, output, new RedactionRectangle(1, 1, 2, 2)),
+            ImageWidth,
+            ImageHeight);
+        var errors = string.Join("\n", result.Errors);
+
+        Assert.True(result.HasErrors);
+        Assert.DoesNotContain(workspace.Root, errors, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("existing-output.png", errors, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(@"\", errors, StringComparison.Ordinal);
+        Assert.DoesNotContain(Environment.UserName, errors, StringComparison.OrdinalIgnoreCase);
+    }
+
     // --- atomic / Error 収集 / 非漏洩 ---
 
     [Fact]

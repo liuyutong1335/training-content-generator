@@ -9,6 +9,7 @@ namespace TrainingContent.Screenshot.Redaction;
 ///   <item><c>SourceImagePath</c> / <c>OutputPath</c> は App / Storage 境界から渡される
 ///   <b>ファイルシステム上の実パス</b>（project-relative path ではない）。絶対パスかつ <c>.png</c> のみ許可し、
 ///   自動補正はしない</item>
+///   <item><c>OutputPath</c> が既に file / directory として存在する場合は Error（既存成果物を上書き・削除しない）</item>
 ///   <item>Region は入力順を維持し、画像境界への clamp のみ行う（統合・並べ替え・重複排除はしない）</item>
 ///   <item>Error 文言には field 名と理由のみを含め、path 実値（drive・ユーザー名・server/share・
 ///   ディレクトリ・ファイル名）を含めない</item>
@@ -45,11 +46,18 @@ public static class ScreenshotRedactionValidator
         var sourceFullPath = ValidateSourceImagePath(request.SourceImagePath, errors);
         var outputFullPath = ValidateOutputPath(request.OutputPath, errors);
 
-        if (sourceFullPath is not null
+        var isSamePath = sourceFullPath is not null
             && outputFullPath is not null
-            && string.Equals(sourceFullPath, outputFullPath, StringComparison.OrdinalIgnoreCase))
+            && string.Equals(sourceFullPath, outputFullPath, StringComparison.OrdinalIgnoreCase);
+
+        if (isSamePath)
         {
             errors.Add("SourceImagePath と OutputPath に同じファイルは指定できません。");
+        }
+        else if (outputFullPath is not null)
+        {
+            // 既存 Output を上書き・削除・rename しない。同一 path 判定を優先する。
+            EnsureOutputPathIsFree(outputFullPath, errors);
         }
 
         // regions
@@ -181,6 +189,29 @@ public static class ScreenshotRedactionValidator
         catch (Exception ex) when (IsPathException(ex))
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// OutputPath が未使用（file / directory として存在しない）ことを確認する。
+    /// 存在確認できない場合（権限等）も安全側に倒して同じ Error にする。path 実値は Error に含めない。
+    /// </summary>
+    private static void EnsureOutputPathIsFree(string fullPath, List<string> errors)
+    {
+        bool isFree;
+
+        try
+        {
+            isFree = !File.Exists(fullPath) && !Directory.Exists(fullPath);
+        }
+        catch (Exception ex) when (IsPathException(ex))
+        {
+            isFree = false;
+        }
+
+        if (!isFree)
+        {
+            errors.Add("OutputPath には未使用のファイルを指定してください。");
         }
     }
 
