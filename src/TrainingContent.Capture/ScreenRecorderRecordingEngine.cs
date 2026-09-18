@@ -137,10 +137,10 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
 
         _recorder!.Stop();
         // OnRecordingComplete / OnRecordingFailed で完了する
-        var result = await _completionSource!.Task.WaitAsync(cancellationToken);
-        // 完了したら Recorder を即解放する（解放を engine.Dispose() まで遅らせない）
-        DisposeRecorder();
-        return result;
+        // 注意: 完了後にここで Dispose しない（lib の完了処理と競合し MP4 の終端書き込みが
+        // 欠けることがある — integration-smoke 項目 4 で実機検出）。解放は次の StartAsync
+        // （先頭の DisposeRecorder）か engine.Dispose() で行う。
+        return await _completionSource!.Task.WaitAsync(cancellationToken);
     }
 
     /// <summary>
