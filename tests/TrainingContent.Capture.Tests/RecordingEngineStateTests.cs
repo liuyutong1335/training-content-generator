@@ -61,7 +61,7 @@ public class RecordingEngineStateTests
         Assert.Contains(".staging-", staging);
     }
 
-    // ---- two-phase finalize（統合メモ §7・DeferredCommit）----
+    // ---- two-phase finalize（統合メモ §8・DeferredCommit）----
 
     [Fact]
     public void CommitPendingRecording_確定待ちが無い場合は拒否()

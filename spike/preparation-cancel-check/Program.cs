@@ -12,7 +12,7 @@ using TrainingContent.Capture;
 //   Session 3: 同一エンジンで再 StartAsync → 直ちに PauseAsync（準備中 Pause・監査 m-1）
 //              → 3 秒待つ（CaptureStarted 済み）→ ResumeAsync → 2 秒録画 → StopAsync
 //   Session 4: DeferredCommit で録画 → StopAsync では staging のまま・canonical 無変更を確認
-//              → CommitPendingRecording で canonical 置換（統合メモ §7 two-phase finalize）
+//              → CommitPendingRecording で canonical 置換（統合メモ §8 two-phase finalize）
 //   Session 5: DeferredCommit で録画 → StopAsync → AbortPendingRecording で canonical 無変更・staging 削除
 //
 // 自動判定:
@@ -176,7 +176,7 @@ catch (Exception ex)
 
 try { if (File.Exists(outFile3)) { File.Delete(outFile3); } } catch { /* 検証値の確認用 */ }
 
-// ---- Session 4 / 5: DeferredCommit（two-phase finalize・統合メモ §7）----
+// ---- Session 4 / 5: DeferredCommit（two-phase finalize・統合メモ §8）----
 // D 側の Recording Finalization Transaction（StepBuilder → validation → project.json save →
 // MP4 確定）のための境界。canonical に「旧録画」を予め置き、StopAsync 時点で canonical が
 // 保護されていること（＝ transaction 中に壊れないこと）と Commit / Abort の両経路を実機確認する。

@@ -22,7 +22,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     // 成功時のみ canonical（options.OutputFilePath）へ置換する。preparation cancel や
     // 失敗時は canonical を触らないため、再録画時に既存の正常な録画を壊さない
     private string? _stagingFilePath;
-    // DeferredCommit モード（統合メモ §7）で録画に成功し、canonical 置換が caller の判断待ちの間 true
+    // DeferredCommit モード（統合メモ §8）で録画に成功し、canonical 置換が caller の判断待ちの間 true
     private bool _pendingCommit;
     // 確定待ち録画の確定時成果（StopAsync 完了時点で固定。Commit をいつ呼んでも
     // Duration / PauseIntervals が stop 時点の値になる — clock は stop 後も進むため再計算しない）
@@ -174,7 +174,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     }
 
     /// <summary>
-    /// DeferredCommit モード（統合メモ §7）で確定待ちの録画を canonical
+    /// DeferredCommit モード（統合メモ §8）で確定待ちの録画を canonical
     /// （<see cref="RecordingOptions.OutputFilePath"/>）へ確定する（staging → canonical の Move）。
     /// Move が失敗した場合（完成 MP4 が視聴中でロックされる等）は例外を送出するが
     /// staging は保持される（R-2 と同じ方針: 録画データを失わない。取り込み直しはこの例外後、
@@ -335,7 +335,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         {
             if (deferred)
             {
-                // two-phase finalize（統合メモ §7）: staging を正常録画として保持し、
+                // two-phase finalize（統合メモ §8）: staging を正常録画として保持し、
                 // canonical への置換を caller の Commit / Abort に委ねる。
                 // D 側は StepBuilder → validation → project.json save を経てから確定できる。
                 // Duration 等はこの時点（stop 完了時）で固定して持ち回る
@@ -415,7 +415,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     {
         DisposeRecorder();
         // DeferredCommit で確定待ち（PendingCommit）の staging は「成功した録画の唯一のコピー」
-        // であるため、Dispose では削除しない（統合メモ §7）。caller が Commit / Abort で
+        // であるため、Dispose では削除しない（統合メモ §8）。caller が Commit / Abort で
         // 明示的に判断する。通常モードでは確定済み / 不存在のため従来どおり冪等に後片付けする
         if (!_pendingCommit)
         {

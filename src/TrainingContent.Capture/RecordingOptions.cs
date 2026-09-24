@@ -22,7 +22,7 @@ public sealed class RecordingOptions
     public AudioDevice? MicrophoneDevice { get; init; }
 
     /// <summary>
-    /// 録画成功時の canonical 置換を caller に委ねる（two-phase finalize・統合メモ §7）。
+    /// 録画成功時の canonical 置換を caller に委ねる（two-phase finalize・統合メモ §8）。
     /// false（既定）では従来どおり StopAsync 完了時に staging → canonical へ置換する。
     /// true では StopAsync が staging パス（<see cref="RecordingResult.PendingCommit"/> = true）を
     /// 返し、caller が <see cref="ScreenRecorderRecordingEngine.CommitPendingRecording"/> か

@@ -135,4 +135,33 @@ public class EventTimelineWriterTests : IDisposable
 
         Assert.Equal(1, seq);
     }
+
+    [Fact]
+    public void クラッシュで改行なしに途切れた最終行のあとでもseqは最大値から続き壊れた行は分離される()
+    {
+        // 監査 MIN-1: 最終行だけを見る方式だと、有効行の後に半壊行（改行なし）が
+        // 残った events.jsonl の追記で seq が 1 から再開（重複）し、追記内容が
+        // 半壊行に連結されて 1 行が完全破損していた。
+        var valid1 = """{"schemaVersion":1,"id":"00000000-0000-0000-0000-000000000001","seq":1,"timestampMs":0,"type":"recording.started","payload":{}}""";
+        var valid2 = """{"schemaVersion":1,"id":"00000000-0000-0000-0000-000000000002","seq":2,"timestampMs":100,"type":"mouse.click","payload":{}}""";
+        var torn = """{"schemaVersion":1,"id":"00000000-0000-0000-0000-000000000003","seq":3,"timestampMs":200,"type":"mo""";
+        File.WriteAllLines(_writer.FilePath, [valid1, valid2]);
+        File.AppendAllText(_writer.FilePath, torn); // 改行なしで途切れた状態を再現
+
+        var secondWriter = new EventTimelineWriter(_writer.FilePath);
+        var (seq, _) = secondWriter.Append("recording.stopped", 900, new { });
+
+        // 読み取れた最大 seq 2 の次 = 3（半壊行の「seq:3」は読めないため再使用になる。
+        // 1 からやり直して 1・2 と重複するより、ベストエフォートで最大可読値を継続する方が良い）。
+        Assert.Equal(3, seq);
+        Assert.Equal(3, secondWriter.Count);
+
+        var lines = File.ReadAllLines(_writer.FilePath);
+        Assert.Equal(4, lines.Length); // 半壊行は 1 行として分離され、追記と連結されない
+
+        // 追記された行は JSON として完全に解析できること（壊れた行に連結されていないこと）。
+        using var doc = JsonDocument.Parse(lines[^1]);
+        Assert.Equal(3, doc.RootElement.GetProperty("seq").GetInt64());
+        Assert.Equal("recording.stopped", doc.RootElement.GetProperty("type").GetString());
+    }
 }

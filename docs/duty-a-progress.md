@@ -250,7 +250,7 @@ D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材�
 
 D 側の「MP4 確定を transaction 最後に制御したい」要望に対し、two-phase finalize を
 `DeferredCommit` opt-in flag（既定 false・既存動作不変）で実装した。詳細・3 案比較・
-D 側の使い方は **統合メモ §7** を参照（integration-notes.md）。
+D 側の使い方は **統合メモ §8** を参照（integration-notes.md）。
 
 - `RecordingOptions.DeferredCommit` / `RecordingResult.PendingCommit` / `PendingCommitPath` を新設
 - `IRecordingEngine.CommitPendingRecording()` / `AbortPendingRecording()` を新設
