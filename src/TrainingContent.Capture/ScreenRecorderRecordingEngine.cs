@@ -22,6 +22,11 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     // 成功時のみ canonical（options.OutputFilePath）へ置換する。preparation cancel や
     // 失敗時は canonical を触らないため、再録画時に既存の正常な録画を壊さない
     private string? _stagingFilePath;
+    // DeferredCommit モード（統合メモ §7）で録画に成功し、canonical 置換が caller の判断待ちの間 true
+    private bool _pendingCommit;
+    // 確定待ち録画の確定時成果（StopAsync 完了時点で固定。Commit をいつ呼んでも
+    // Duration / PauseIntervals が stop 時点の値になる — clock は stop 後も進むため再計算しない）
+    private RecordingResult? _pendingResult;
 
     public event EventHandler<RecordingStateChangedEventArgs>? StateChanged;
 
@@ -65,6 +70,13 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         if (State is RecordingState.Recording or RecordingState.Paused)
         {
             throw new InvalidOperationException("録画セッションは既に開始されています");
+        }
+
+        if (_pendingCommit)
+        {
+            // 確定待ちの staging がある状態での再録画は、Commit / Abort の機会を失わせるため拒否する
+            throw new InvalidOperationException(
+                $"確定待ちの録画があります（{_stagingFilePath}）。CommitPendingRecording / AbortPendingRecording を先に呼び出してください");
         }
 
         _currentOptions = options ?? throw new ArgumentNullException(nameof(options));
@@ -162,6 +174,64 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     }
 
     /// <summary>
+    /// DeferredCommit モード（統合メモ §7）で確定待ちの録画を canonical
+    /// （<see cref="RecordingOptions.OutputFilePath"/>）へ確定する（staging → canonical の Move）。
+    /// Move が失敗した場合（完成 MP4 が視聴中でロックされる等）は例外を送出するが
+    /// staging は保持される（R-2 と同じ方針: 録画データを失わない。取り込み直しはこの例外後、
+    /// staging に対して行う）。成功すると確定済みの RecordingResult（FilePath = canonical）を返す。
+    /// </summary>
+    public RecordingResult CommitPendingRecording()
+    {
+        if (!_pendingCommit || _stagingFilePath is null || _pendingResult is null || _currentOptions is null)
+        {
+            throw new InvalidOperationException("確定待ちの録画がありません（DeferredCommit モードの StopAsync 成功後に呼び出せます）");
+        }
+
+        var canonical = _currentOptions.OutputFilePath;
+        try
+        {
+            File.Move(_stagingFilePath, canonical, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"録画ファイルを {canonical} へ確定できませんでした（staging に残留: {_stagingFilePath}）: {ex.Message}", ex);
+        }
+
+        _stagingFilePath = null;
+        _pendingCommit = false;
+        var committed = _pendingResult;
+        _pendingResult = null;
+        // Duration 等は stop 完了時点の固定値を使い直す（この時点の clock 再計算はしない）
+        return new RecordingResult
+        {
+            FilePath = canonical,
+            Duration = committed.Duration,
+            StartedAtUtc = committed.StartedAtUtc,
+            PauseIntervals = committed.PauseIntervals,
+            PendingCommit = false,
+            PendingCommitPath = canonical,
+        };
+    }
+
+    /// <summary>
+    /// DeferredCommit モードで確定待ちの録画を破棄する（staging の削除のみ。
+    /// canonical は一切変更されない）。トランザクションを失敗させる場合に呼ぶ。
+    /// staging は既知の lib ハンドルリークにより削除に失敗し得るが、その場合も canonical は無傷。
+    /// </summary>
+    public void AbortPendingRecording()
+    {
+        if (!_pendingCommit || _stagingFilePath is null)
+        {
+            throw new InvalidOperationException("確定待ちの録画がありません（DeferredCommit モードの StopAsync 成功後に呼び出せます）");
+        }
+
+        TryDeleteStaging();
+        _pendingCommit = false;
+        _pendingResult = null;
+    }
+
+    /// <summary>
     /// Pause 中の時間を除外した論理 Duration を返す（契約 §5.2:
     /// Canonical Timeline に Pause を含めない）。
     /// </summary>
@@ -178,6 +248,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
 
     private RecordingResult BuildResult(string filePath)
     {
+        var canonicalPath = _currentOptions?.OutputFilePath;
         // CaptureStarted 前に停止された場合（WGC 初期化の ~2 秒窓・2 回目の StartAsync 直後など）、
         // Canonical Timeline はまだ始まっていない。_clock はエンジン構築時から走っているため
         // 生の Elapsed を返すと実録時間より大幅に大きくなる → Duration は 0 を返す
@@ -189,6 +260,8 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
                 Duration = TimeSpan.Zero,
                 StartedAtUtc = _startedAtUtc,
                 PauseIntervals = [],
+                PendingCommit = _pendingCommit,
+                PendingCommitPath = canonicalPath,
             };
         }
 
@@ -198,6 +271,8 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
             Duration = CanonicalDuration(),
             StartedAtUtc = _startedAtUtc,
             PauseIntervals = _pauseIntervals.ToArray(),
+            PendingCommit = _pendingCommit,
+            PendingCommitPath = canonicalPath,
         };
     }
 
@@ -255,8 +330,21 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     {
         State = RecordingState.Idle;
         var finalPath = _currentOptions!.OutputFilePath;
+        var deferred = _currentOptions.DeferredCommit;
         if (_captureStarted && _stagingFilePath is not null)
         {
+            if (deferred)
+            {
+                // two-phase finalize（統合メモ §7）: staging を正常録画として保持し、
+                // canonical への置換を caller の Commit / Abort に委ねる。
+                // D 側は StepBuilder → validation → project.json save を経てから確定できる。
+                // Duration 等はこの時点（stop 完了時）で固定して持ち回る
+                _pendingCommit = true;
+                _pendingResult = BuildResult(_stagingFilePath);
+                _completionSource?.TrySetResult(_pendingResult);
+                return;
+            }
+
             // 撮影に成功した場合のみ canonical へ置換する（R-2: 再録画時に既存の
             // 正常な録画を staging で壊さない。同一ボリュームなので Move で原子的に入れ替わる）。
             // Move が失敗した場合（再生中のロック等）は録画データを失わないよう、
@@ -280,6 +368,7 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
             TryDeleteStaging();
         }
 
+        _pendingCommit = false;
         _completionSource?.TrySetResult(BuildResult(finalPath));
     }
 
@@ -325,7 +414,13 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
     public void Dispose()
     {
         DisposeRecorder();
-        TryDeleteStaging();
+        // DeferredCommit で確定待ち（PendingCommit）の staging は「成功した録画の唯一のコピー」
+        // であるため、Dispose では削除しない（統合メモ §7）。caller が Commit / Abort で
+        // 明示的に判断する。通常モードでは確定済み / 不存在のため従来どおり冪等に後片付けする
+        if (!_pendingCommit)
+        {
+            TryDeleteStaging();
+        }
     }
 
     /// <summary>

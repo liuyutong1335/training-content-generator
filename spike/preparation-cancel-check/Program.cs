@@ -11,6 +11,9 @@ using TrainingContent.Capture;
 //   Session 2: 同一エンジンで再 StartAsync → 3 秒待つ（CaptureStarted 済み）→ StopAsync
 //   Session 3: 同一エンジンで再 StartAsync → 直ちに PauseAsync（準備中 Pause・監査 m-1）
 //              → 3 秒待つ（CaptureStarted 済み）→ ResumeAsync → 2 秒録画 → StopAsync
+//   Session 4: DeferredCommit で録画 → StopAsync では staging のまま・canonical 無変更を確認
+//              → CommitPendingRecording で canonical 置換（統合メモ §7 two-phase finalize）
+//   Session 5: DeferredCommit で録画 → StopAsync → AbortPendingRecording で canonical 無変更・staging 削除
 //
 // 自動判定:
 //   1. Session 1 の StopAsync がタイムアウト（15 秒）内に完了する（lib が Stop を握り潰してハングしない）
@@ -173,13 +176,72 @@ catch (Exception ex)
 
 try { if (File.Exists(outFile3)) { File.Delete(outFile3); } } catch { /* 検証値の確認用 */ }
 
+// ---- Session 4 / 5: DeferredCommit（two-phase finalize・統合メモ §7）----
+// D 側の Recording Finalization Transaction（StepBuilder → validation → project.json save →
+// MP4 確定）のための境界。canonical に「旧録画」を予め置き、StopAsync 時点で canonical が
+// 保護されていること（＝ transaction 中に壊れないこと）と Commit / Abort の両経路を実機確認する。
+var deferredResult = default(RecordingResult);
+var commitSucceeded = false;
+var abortSucceeded = false;
+try
+{
+    // ---- Session 4: Commit 経路 ----
+    var outFile4 = Path.Combine(outDir, "deferred-commit.mp4");
+    File.WriteAllBytes(outFile4, [0x4F, 0x4C, 0x44]); // 旧録画を模した 3 バイト（"OLD"）
+    var options4 = new RecordingOptions { OutputFilePath = outFile4, DeferredCommit = true };
+    await engine.StartAsync(options4);
+    await Task.Delay(3000); // CaptureStarted を跨ぐ
+    deferredResult = await engine.StopAsync();
+
+    var stagingKept = deferredResult.PendingCommit
+                      && deferredResult.FilePath != outFile4
+                      && File.Exists(deferredResult.FilePath)
+                      && new FileInfo(deferredResult.FilePath).Length > 3;
+    var canonicalProtectedAtStop = File.ReadAllText(outFile4) == "OLD";
+    Check("8. DeferredCommit: StopAsync では staging のまま（canonical は無変更）", stagingKept && canonicalProtectedAtStop,
+        $"FilePath = {Path.GetFileName(deferredResult.FilePath)} / Duration = {deferredResult.Duration.TotalSeconds:F1} 秒（待ち時間を含まない固定値）");
+
+    var committedResult = engine.CommitPendingRecording();
+    commitSucceeded = File.Exists(outFile4)
+                      && new FileInfo(outFile4).Length > 3 // "OLD" 3 バイトより実 MP4 が大きい
+                      && committedResult.FilePath == outFile4
+                      && !committedResult.PendingCommit
+                      && committedResult.Duration == deferredResult.Duration;
+    Check("9. CommitPendingRecording で canonical を確定（Duration は Stop 時の固定値）", commitSucceeded,
+        $"canonical = {Path.GetFileName(committedResult.FilePath)} / Duration = {committedResult.Duration.TotalSeconds:F1} 秒（Stop 時と同一）");
+    try { if (File.Exists(outFile4)) { File.Delete(outFile4); } } catch { /* 検証値の確認用 */ }
+
+    // ---- Session 5: Abort 経路 ----
+    var outFile5 = Path.Combine(outDir, "deferred-abort.mp4");
+    File.WriteAllBytes(outFile5, [0x4F, 0x4C, 0x44]);
+    var options5 = new RecordingOptions { OutputFilePath = outFile5, DeferredCommit = true };
+    await engine.StartAsync(options5);
+    await Task.Delay(3000);
+    var abortedStop = await engine.StopAsync();
+    engine.AbortPendingRecording();
+    var canonicalUnchanged = File.ReadAllText(outFile5) == "OLD";
+    var stagingGone = !File.Exists(abortedStop.FilePath)
+                      || new FileInfo(abortedStop.FilePath).Length == 0; // ハンドルリークで 0 バイト残留のみ許容
+    abortSucceeded = canonicalUnchanged && stagingGone;
+    Check("10. AbortPendingRecording で canonical を保護したまま破棄", abortSucceeded,
+        canonicalUnchanged ? "canonical は無変更 / staging は削除（または既知のリークで 0 バイト残留）" : "canonical が書き換わった");
+    try { if (File.Exists(outFile5)) { File.Delete(outFile5); } } catch { /* 検証値の確認用 */ }
+}
+catch (Exception ex)
+{
+    Check("8. DeferredCommit: StopAsync では staging のまま（canonical は無変更）", false, $"{ex.GetType().Name}: {ex.Message}");
+    Check("9. CommitPendingRecording で canonical を確定（Duration は Stop 時の固定値）", false, "Session 4 が異常終了");
+    Check("10. AbortPendingRecording で canonical を保護したまま破棄", false, "Session 4/5 が異常終了");
+}
+
 // Session 2 の成果物は対照実験で削除を試みた。残っていれば遅延削除する
 try { if (File.Exists(outFile2)) { File.Delete(outFile2); } } catch { /* 検証値の確認用 */ }
 
-var allPass = durationIsZero && cancelFileIsZeroBytes && normalResult.Duration > TimeSpan.Zero && prepPauseSucceeded;
+var allPass = durationIsZero && cancelFileIsZeroBytes && normalResult.Duration > TimeSpan.Zero && prepPauseSucceeded
+              && commitSucceeded && abortSucceeded;
 Console.WriteLine();
 Console.WriteLine(allPass
-    ? "=== 結論: 全項目 PASS — RC-2 の「preparation 中 Cancel = StopAsync」方式と m-1 の準備中 Pause 耐性は実機で動作する ==="
+    ? "=== 結論: 全項目 PASS — RC-2 の「preparation 中 Cancel = StopAsync」方式・m-1 の準備中 Pause 耐性・DeferredCommit（two-phase finalize）は実機で動作する ==="
     : "=== 結論: 要確認 — 上記 FAIL 項目を duty-a-progress に記録すること ===");
 return allPass ? 0 : 1;
 
