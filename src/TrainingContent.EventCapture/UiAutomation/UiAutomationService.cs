@@ -53,7 +53,7 @@ public sealed class UiAutomationService
                 FormatParentChain(parentChain),
                 FormatCandidates(candidates, x, y),
                 IsEditable(chosen),
-                chosen.IsPassword,
+                IsPasswordFailClosed(chosen.IsPassword),
                 chosen.IsKeyboardFocusable);
         }
         catch (Exception ex)
@@ -91,7 +91,7 @@ public sealed class UiAutomationService
                 FormatParentChain(parentChain),
                 "(focused element lookup)",
                 IsEditable(focused),
-                focused.IsPassword,
+                IsPasswordFailClosed(focused.IsPassword),
                 focused.IsKeyboardFocusable);
         }
         catch (Exception ex)
@@ -209,13 +209,13 @@ public sealed class UiAutomationService
                 depth,
                 null,
                 SafeBool(() => current.IsPassword),
-                SafeBool(() => current.IsKeyboardFocusable),
+                SafeBool(() => current.IsKeyboardFocusable) == true, // 表示用メタデータのため fail-open
                 SafePattern(element, ValuePattern.Pattern),
                 SafePattern(element, TextPattern.Pattern));
         }
         catch (Exception ex)
         {
-            return new ElementSnapshot(null, null, null, null, null, false, depth, ex.Message, false, false, false, false);
+            return new ElementSnapshot(null, null, null, null, null, false, depth, ex.Message, null, false, false, false);
         }
     }
 
@@ -316,7 +316,7 @@ public sealed class UiAutomationService
     {
         var suffix = clickX.HasValue ? $", contains click: {(element.ContainsClick ? "yes" : "no")}" : string.Empty;
         var error = string.IsNullOrWhiteSpace(element.Error) ? string.Empty : $", error: {element.Error}";
-        return $"depth {element.Depth}: name={element.Name ?? "(empty)"}, control={element.ControlType ?? "(unknown)"}, class={element.ClassName ?? "(none)"}, automationId={element.AutomationId ?? "(none)"}, bounds={FormatBounds(element.Bounds)}, editable={(IsEditable(element) ? "yes" : "no")}, password={(element.IsPassword ? "yes" : "no")}, focusable={(element.IsKeyboardFocusable ? "yes" : "no")}{suffix}{error}";
+        return $"depth {element.Depth}: name={element.Name ?? "(empty)"}, control={element.ControlType ?? "(unknown)"}, class={element.ClassName ?? "(none)"}, automationId={element.AutomationId ?? "(none)"}, bounds={FormatBounds(element.Bounds)}, editable={(IsEditable(element) ? "yes" : "no")}, password={(element.IsPassword switch { true => "yes", false => "no", _ => "unknown" })}, focusable={(element.IsKeyboardFocusable ? "yes" : "no")}{suffix}{error}";
     }
 
     private static string FormatParentChain(IReadOnlyList<ElementSnapshot> parents)
@@ -365,7 +365,13 @@ public sealed class UiAutomationService
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
-    private static bool SafeBool(Func<bool> getter)
+    /// <summary>
+    /// UIA プロパティ取得の結果を三値で返す（監査 MIN-2）。
+    /// true / false / null（取得例外。読めたかどうか不明 = パスワードかどうか不明）。
+    /// 従来の bool への潰れだと、IsPassword 読み取り失敗が「パスワードでない」扱いになり、
+    /// keyCount を採番する誤り（契約 §11.1 違反）を起こし得た。
+    /// </summary>
+    private static bool? SafeBool(Func<bool> getter)
     {
         try
         {
@@ -373,8 +379,14 @@ public sealed class UiAutomationService
         }
         catch
         {
-            return false;
+            return null;
         }
+    }
+
+    /// <summary>IsPassword の取得に失敗した要素は fail-closed で sensitive 側に倒す（契約 §11.1）。</summary>
+    private static bool IsPasswordFailClosed(bool? rawPassword)
+    {
+        return rawPassword != false;
     }
 
     private static bool SafePattern(AutomationElement element, AutomationPattern pattern)
@@ -398,7 +410,7 @@ public sealed class UiAutomationService
         bool ContainsClick = false,
         int Depth = 0,
         string? Error = null,
-        bool IsPassword = false,
+        bool? IsPassword = null,
         bool IsKeyboardFocusable = false,
         bool SupportsValuePattern = false,
         bool SupportsTextPattern = false);
