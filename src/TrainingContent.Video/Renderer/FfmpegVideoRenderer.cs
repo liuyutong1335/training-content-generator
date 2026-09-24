@@ -33,6 +33,7 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        CompositionInputGuard.EnsureRecordingPresent(request.Project); // m-5: Recording が無いと字幕 0 件で「成功」するため拒否
         options ??= new VideoCompositionOptions();
         if (!File.Exists(request.RecordingPath))
         {
