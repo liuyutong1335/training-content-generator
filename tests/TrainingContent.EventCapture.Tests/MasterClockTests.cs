@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using Xunit;
 using TrainingContent.EventCapture;
 
@@ -127,5 +129,58 @@ public class MasterClockTests
         clock.Resume(); // Pause 5000 を除外
         now = 9000;
         Assert.Equal(2000, clock.NowMs()); // 9000 - 原点シフト 2000 - Pause 5000
+    }
+
+    [Fact]
+    public void PauseResumeとToCanonicalMsの並行呼び出しでも例外が出ない()
+    {
+        // 監査指摘: _pauseIntervals が worker / app thread 間で同期されておらず、
+        // Pause / Resume と ToCanonicalMs が並行した場合に「Collection was modified」
+        // や torn state による例外・event drop の可能性があった。
+        // 実クロックで app 側 Pause / Resume 連打と worker 側変換を並行させ、
+        // 一定時間例外が出ないことを確認する。
+        var clock = new MasterClock();
+        clock.Start();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1000));
+        var errors = new ConcurrentBag<Exception>();
+
+        var appSide = Task.Run(() =>
+        {
+            try
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    clock.Pause();
+                    clock.Resume();
+                    clock.RebaseOriginToNow();
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+            }
+        });
+
+        var workerSide = Task.Run(() =>
+        {
+            try
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    clock.ToCanonicalMs(Stopwatch.GetTimestamp());
+                    clock.ToCanonicalMs(Stopwatch.GetTimestamp() - Stopwatch.Frequency); // 1 秒前
+                    _ = clock.IsPaused;
+                    _ = clock.NowMs();
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+            }
+        });
+
+        Task.WaitAll(appSide, workerSide);
+        Assert.Empty(errors);
     }
 }

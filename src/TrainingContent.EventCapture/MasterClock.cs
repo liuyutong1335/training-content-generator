@@ -12,12 +12,20 @@ namespace TrainingContent.EventCapture;
 /// 「発生した瞬間」と「イベントとして受領する瞬間」が乖離する Raw Event を、
 /// 物理発生時刻のまま Canonical Timeline へ載せるため（受領時刻で採番すると
 /// ダブルクリック待ち時間ぶんの系統誤差が生じる）。
+///
+/// スレッド安全性: Pause / Resume はアプリスレッド（OperationCaptureSession の
+/// Pause / Resume 呼び出し）、ToCanonicalMs / IsPaused / NowMs はワーカー
+/// スレッド（ProcessItem）から呼ばれるため、全公開メソッドを 1 つのロックで
+/// 直列化する（監査指摘: 非同期のままでは Pause / Resume の _pauseIntervals
+/// 改変と ToCanonicalMs の列挙が重なった場合、「Collection was modified」や
+/// torn state による例外・event drop の可能性があった）。
 /// </summary>
 public sealed class MasterClock
 {
     private readonly Func<long> _elapsedMs;
     private readonly Stopwatch? _ownedStopwatch;
     private readonly bool _ownsClock;
+    private readonly object _sync = new();
     private readonly List<(long StartRawMs, long? EndRawMs)> _pauseIntervals = [];
     private long _originShiftMs;
     private long _startQpc;
@@ -37,30 +45,42 @@ public sealed class MasterClock
         _elapsedMs = elapsedMsProvider;
     }
 
-    public bool IsPaused => _started && _pauseIntervals is [.., (_, null)];
+    public bool IsPaused
+    {
+        get { lock (_sync) { return IsPausedCore(); } }
+    }
 
     public void Start()
     {
-        _started = true;
-        _ownedStopwatch?.Start();
-        _startQpc = Stopwatch.GetTimestamp();
+        lock (_sync)
+        {
+            _started = true;
+            _ownedStopwatch?.Start();
+            _startQpc = Stopwatch.GetTimestamp();
+        }
     }
 
     public void Pause()
     {
-        if (!_started || _pauseIntervals is [.., (_, null)])
+        lock (_sync)
         {
-            return;
-        }
+            if (!_started || IsPausedCore())
+            {
+                return;
+            }
 
-        _pauseIntervals.Add((_elapsedMs(), null));
+            _pauseIntervals.Add((_elapsedMs(), null));
+        }
     }
 
     public void Resume()
     {
-        if (_pauseIntervals is [.., (var start, null)])
+        lock (_sync)
         {
-            _pauseIntervals[^1] = (start, _elapsedMs());
+            if (_pauseIntervals is [.., (var start, null)])
+            {
+                _pauseIntervals[^1] = (start, _elapsedMs());
+            }
         }
     }
 
@@ -72,18 +92,19 @@ public sealed class MasterClock
     /// </summary>
     public void RebaseOriginToNow()
     {
-        _originShiftMs += NowMs();
+        lock (_sync)
+        {
+            _originShiftMs += NowMsCore();
+        }
     }
 
     /// <summary>Canonical Timeline 上の現在時刻 (ms)。開始前は 0。</summary>
     public long NowMs()
     {
-        if (!_started)
+        lock (_sync)
         {
-            return 0;
+            return NowMsCore();
         }
-
-        return CanonicalOfRaw(_elapsedMs());
     }
 
     /// <summary>
@@ -93,18 +114,21 @@ public sealed class MasterClock
     /// </summary>
     public long ToCanonicalMs(long qpcTimestamp)
     {
-        if (!_started)
+        lock (_sync)
         {
-            return 0;
-        }
+            if (!_started)
+            {
+                return 0;
+            }
 
-        if (!_ownsClock)
-        {
-            return NowMs();
-        }
+            if (!_ownsClock)
+            {
+                return NowMsCore();
+            }
 
-        var raw = (long)((qpcTimestamp - _startQpc) * 1000.0 / Stopwatch.Frequency);
-        return Math.Max(0, CanonicalOfRaw(raw));
+            var raw = (long)((qpcTimestamp - _startQpc) * 1000.0 / Stopwatch.Frequency);
+            return Math.Max(0, CanonicalOfRaw(raw));
+        }
     }
 
     /// <summary>QPC タイムスタンプから現在までの経過 ms（処理遅延の検出用）。注入モードでは 0。</summary>
@@ -118,7 +142,21 @@ public sealed class MasterClock
         return (long)((Stopwatch.GetTimestamp() - qpcTimestamp) * 1000.0 / Stopwatch.Frequency);
     }
 
-    /// <summary>raw 経過 ms（時間源の生値）を Canonical ms へ変換する。Pause 区間を除外する。</summary>
+    /// <summary>NowMs の実体。ロック保持下でのみ呼ぶこと。</summary>
+    private long NowMsCore()
+    {
+        if (!_started)
+        {
+            return 0;
+        }
+
+        return CanonicalOfRaw(_elapsedMs());
+    }
+
+    /// <summary>IsPaused の実体。ロック保持下でのみ呼ぶこと。</summary>
+    private bool IsPausedCore() => _started && _pauseIntervals is [.., (_, null)];
+
+    /// <summary>raw 経過 ms（時間源の生値）を Canonical ms へ変換する。Pause 区間を除外する。ロック保持下でのみ呼ぶこと。</summary>
     private long CanonicalOfRaw(long rawMs)
     {
         // Pause 区間のうち rawMs より前の部分だけを除外する:
