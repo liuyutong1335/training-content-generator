@@ -108,8 +108,16 @@ public sealed class ScreenRecorderRecordingEngine : IRecordingEngine, IDisposabl
         }
 
         _recorder!.Resume();
-        _pauseIntervals.Add((_pauseStartedAt!.Value, _clock.Elapsed));
-        _pauseStartedAt = null;
+        // 監査 m-1: 準備中（CaptureStarted 前）の Pause → そのまま撮影開始になった場合、
+        // OnStatusChanged が旧クロック領域ごと Pause 情報を破棄する（知見 11）ため
+        // _pauseStartedAt が null のまま Resume され得る。区間が無ければ追記しないだけとし、
+        // ここで NRE しない（D の UI は準備中 Pause を許可しないが、エンジン単独利用時は到達し得る）。
+        if (_pauseStartedAt is { } pauseStart)
+        {
+            _pauseIntervals.Add((pauseStart, _clock.Elapsed));
+            _pauseStartedAt = null;
+        }
+
         State = RecordingState.Recording;
         return Task.CompletedTask;
     }
