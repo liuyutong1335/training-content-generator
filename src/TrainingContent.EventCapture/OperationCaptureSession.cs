@@ -57,8 +57,17 @@ public sealed class OperationCaptureSession : IDisposable
     private (UiElementInfo? Element, string? ProcessName, string? WindowTitle) _textTarget;
     private string? _lastTextWindowKey;
     private bool _started;
+
+    /// <summary>Start の初期化（フック設置 + recording.started 書き出し）が完了したか
+    /// （監査 MIN-6: 実行中も true になる IsRecording を補正する）。</summary>
+    private volatile bool _startCompleted;
     private bool _stopped;
     private bool _startFailed;
+
+    /// <summary>Start 実行中の Dispose が完了を待つためのシグナル（監査 RC-6:
+    /// 初期化中に Dispose するとフック設置との競合で started / stopped 逆順の
+    /// ファイルやフック残留を残し得た）。</summary>
+    private readonly ManualResetEventSlim _startDone = new();
 
     /// <summary>Stop の最終 flush 後に worker 側のユーザー Event 追加を禁止するフラグ
     /// （recording.stopped より後への mouse.* / keyboard.* 書き込みを防ぐ）。
@@ -81,9 +90,10 @@ public sealed class OperationCaptureSession : IDisposable
     /// 録画処理中か（Start が正常に完了して以降〜Stop まで）。
     /// Capture preparation 中の Cancel 判定など、呼び出し側の分岐用:
     /// false なら Stop は呼ばず Dispose する（Stop は InvalidOperationException を投げる）。
-    /// Start 失敗セッション・停止済みセッションでは false。書き込み直後の一瞬の遅れはあり得る。
+    /// Start 失敗セッション・停止済みセッションでは false。
+    /// Start 実行中（初期化の間）も false（監査 MIN-6。書き込み直後の一瞬の遅れはあり得る）。
     /// </summary>
-    public bool IsRecording => _started && !_startFailed && !_stopped;
+    public bool IsRecording => _startCompleted && !_startFailed && !_stopped;
 
     /// <summary>書き出した Event の総数（recording.* ライフサイクルを含む）。</summary>
     public long EventCount => _writer?.Count ?? 0;
@@ -143,6 +153,10 @@ public sealed class OperationCaptureSession : IDisposable
 
             _clock.Start();
             _writer.Append("recording.started", _clock.NowMs(), new { });
+
+            // recording.started の書き出しまで成功して初めて「録画処理中」になる
+            // （IsRecording の監査 MIN-6 補正。volatile で他スレッドからも可視化）。
+            _startCompleted = true;
         }
         catch
         {
@@ -164,6 +178,11 @@ public sealed class OperationCaptureSession : IDisposable
             // （Dispose → Stop 経路でライフサイクルイベントを追加書き込みしない）。
             _writer = null;
             throw;
+        }
+        finally
+        {
+            // Start 実行中に Dispose されたスレッドを解放する（監査 RC-6）。
+            _startDone.Set();
         }
     }
 
@@ -269,7 +288,17 @@ public sealed class OperationCaptureSession : IDisposable
         {
             try
             {
-                if (_started && !_stopped)
+                // Start 実行中に呼ばれた場合は初期化の完了を待つ（監査 RC-6）。
+                // 待たずに後片付けると、並行する Start のフック設置と競合して
+                // フック残留 / started・stopped 逆順のファイルを残し得る。
+                // （同一スレッドからは呼べない呼び出し順なのでデッドロックにはならない。
+                //   Start がハングした場合もタイムアウトで諦めて finally の後片付けへ）
+                if (_started && !_startDone.IsSet)
+                {
+                    _startDone.Wait(15000);
+                }
+
+                if (_startCompleted && !_startFailed && !_stopped)
                 {
                     Stop();
                 }
@@ -334,7 +363,9 @@ public sealed class OperationCaptureSession : IDisposable
 
     private void ThrowIfNotRunning()
     {
-        if (_startFailed || !_started || _stopped)
+        // _startCompleted も含める（監査 MIN-6 / RC-6: Start 初期化中の Stop は
+        // フック設置と競合するため「録画中ではない」として拒否する。目安は IsRecording）。
+        if (_startFailed || !_started || !_startCompleted || _stopped)
         {
             throw new InvalidOperationException("セッションは録画中ではありません。");
         }
@@ -342,9 +373,19 @@ public sealed class OperationCaptureSession : IDisposable
 
     private void Enqueue(RawItem item)
     {
-        if (!_queue.IsAddingCompleted)
+        // IsAddingCompleted チェックと Add の間で Stop / Dispose 側の CompleteAdding が
+        // 入ると InvalidOperationException（Dispose 後なら ObjectDisposedException）が
+        // フックスレッドのコールバック内で飛ぶ。LL Hook コールバック内の未処理例外は
+        // プロセス墜落になり得るため、「停止瞬間の入力破棄」として握り潰す。
+        try
         {
-            _queue.Add(item);
+            if (!_queue.IsAddingCompleted)
+            {
+                _queue.Add(item);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
         }
     }
 

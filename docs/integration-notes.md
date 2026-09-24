@@ -82,3 +82,84 @@ D 側の再確認で残っていた既存監査項目 2 点を EventCapture 内�
      （`queueに滞留があってもrecording_stoppedは最終行` テストで継続検証）
 - テスト: MasterClock 並行呼び出しテスト（Pause/Resume × ToCanonicalMs を 1 秒間連打）と、
   Join タイムアウトを WindowFilter 滞留 + 短縮タイムアウトで再現する session テストを追加。全 46/46 PASS。
+
+## 7. 監査 Minor 残の B 一括対応（2026-09-24 / feature/event-capture-quality-2）
+
+audit-2026-09-18 の B 担当残留 Minor 5 件を EventCapture 内で修正した（Phase 0 契約は不変）:
+
+1. **MIN-1（seq 重複 / 行破損）**: `EventTimelineWriter` が seq を最終行だけから読むため、
+   クラッシュで半壊した最終行の後に追記すると seq が 1 から再開（§8.1 違反）し、
+   追記が半壊行に連結されて 1 行が完全破損していた。**全行から最大可読 seq を採用** +
+   **開始時に末尾改行を正規化**（半壊行は分離される。半壊行の seq は読めないため再使用になり得るが、
+   1 からやり直すよりベストエフォートで最大可読値を継続する方が良い）。
+2. **MIN-2（KB-2 fail-closed の漏れ）**: UIA の `IsPassword` プロパティ取得例外が
+   `false` に潰れ、パスワード入力が keyCount 採番され得た（§11.1）。`SafeBool` を三値化し、
+   **取得失敗（null）は fail-closed で sensitive 側に倒す**。表示用の `IsKeyboardFocusable` は
+   従来どおり fail-open。
+3. **Enqueue の check-then-act 競合（監査外の新規指摘）**: `IsAddingCompleted` チェックと
+   `Add` の間に `CompleteAdding` が入ると、LL Hook コールバック内で未処理例外 → プロセス墜落の
+   可能性。停止瞬間の入力破棄として握り潰す。
+4. **MIN-5（保留クリックのタイマー世代競合）**: 前の保留のタイマー コールバックが飛行中に
+   保留が更新されると、新しい保留を判定時間待たずに flush しダブルクリックが 2 単発に分裂
+   し得た。**世代カウンタでコールバックの有効性を確認**。
+5. **MIN-6 / RC-6（IsRecording が Start 実行中も true / Start-Dispose 競合）**:
+   `_startCompleted`（volatile）を導入し、**recording.started の書き出し成功後に IsRecording が
+   true になる**よう補正。Stop は `_startCompleted` を要求し、Start 実行中の Dispose は
+   `_startDone` シグナルで完了を待ってから後片付けする（フック設置との競合解消）。
+- テスト: 半壊最終行からの seq 継続テストを追加。EventCapture.Tests 47/47 PASS（2 回実施）。
+  MIN-5 / MIN-6 はレース再現が困難なため実装レビュー + 既存回帰で担保。
+
+## 8. Recording Finalization Transaction の境界（2026-09-24 / D からの相談・A 提案）
+
+D 側で StepBuilder を含む Recording Finalization Transaction を実装するにあたり、
+「MP4 の確定（staging → canonical 置換）を transaction の最後に制御したい」という要望を D から受領。
+現行エンジンは StopAsync 完了時点で staging → canonical 置換まで行うため、
+「project.json 保存の後に録画を確定する」順序が作れない（置換成功 + project.json 保存失敗で
+new MP4 + old RecordingInfo / Steps が残る）。
+
+### 選定（3 案比較）
+
+| 案 | 判定 | 理由 |
+|---|---|---|
+| ① StopAsync は staging で確定し、caller が Commit / Abort | **採用** | opt-in flag で既定動作が不変（契約 §7・B・既存ツールに影響なし）。Move 失敗時の staging 保持（R-2 の実機知見）を Engine が担い続ける。D は staging の命名・置換・失敗扱いを複製しなくてよい |
+| ② staging path を caller に返し D が canonical replacement を所有 | 不採用 | `RecordingResult.FilePath`（= canonical）の扱いが全 caller で変わり契約上の変更になる。Move 失敗の意味論が D 側に複製される |
+| ③ Engine からの rollback / backup contract | 不採用 | backup 復元自体がロックで失敗し得るため状態が増えるだけ。①で同じ保証が得られる |
+
+### 実装（feature/deferred-commit-boundary）
+
+- `RecordingOptions.DeferredCommit`（既定 false）を追加。true の場合:
+  - StopAsync は録画成功時に **staging を保持したまま**戻り、`RecordingResult` は
+    `PendingCommit = true`・`FilePath = staging パス`・`PendingCommitPath = canonical 予定地`。
+    **Duration / PauseIntervals / StartedAtUtc は stop 完了時点で固定**（Commit をいつ呼んでも同じ値）
+  - `CommitPendingRecording()` — staging → canonical の Move（two-phase finalize の Commit 相当）。
+    Move 失敗時は例外だが staging は保持（録画データを失わない。R-2 と同じ方針）
+  - `AbortPendingRecording()` — staging の削除のみ。canonical は一切変更されない
+  - Dispose は確定待ち staging を削除しない（成功録画の唯一のコピーのため。caller の判断に委ねる）
+  - 確定待ちがある状態の再 StartAsync は拒否する（Commit / Abort の機会を失わせないため）
+- 既定（false）は従来どおり StopAsync 内で置換まで完了。B・既存ツール・テストに影響なし
+- preparation cancel（CaptureStarted 前 Stop）経路は DeferredCommit でも変わらない
+  （Duration = 0・staging 削除のみ・canonical 無変更）
+
+### D 側の使い方（transaction への組み込み）
+
+```csharp
+var options = new RecordingOptions { OutputFilePath = canonical, DeferredCommit = true };
+var result = await engine.StopAsync(ct);        // PendingCommit = true / FilePath = staging
+// result.Duration は固定値 → ここで先に project.json / RecordingInfo を保存してよい
+try
+{
+    // EventCapture finalize → StepBuilder → validation → project.json save
+    var committed = engine.CommitPendingRecording();  // 最後に MP4 を確定
+    // committed.FilePath == canonical（project.json と一致）
+}
+catch
+{
+    engine.AbortPendingRecording();   // transaction 失敗: canonical（旧録画）は無傷
+}
+```
+
+- **実機検証**: `spike/preparation-cancel-check` に Session 4（Commit 経路）/ 5（Abort 経路）を追加。
+  canonical に旧録画（"OLD" 3 バイト）を予め置き、StopAsync 時点で canonical が保護されていること・
+  Commit で実 MP4 に確定されること・Abort で canonical 無変更かつ staging 削除されることを確認。全 10 項目 PASS
+- **状態**: A 側実装・実機検証済み。例会で D 側の受領確認を残すのみ（§1 と同じ扱い）
+

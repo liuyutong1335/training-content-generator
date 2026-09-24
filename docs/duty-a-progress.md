@@ -245,3 +245,16 @@ D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材�
     検証: `spike/preparation-cancel-check` に Session 3（準備中 Pause → Resume → 録画）を追加・実機全 7 項目 PASS
   - **エンジン修正**: `ResumeAsync` の `_pauseStartedAt!.Value` を null 安全化（CaptureStarted 時に
     Pause 情報が破棄済みでも NRE しない。State は Paused を保持し、Resume で lib.Resume() をそのまま呼ぶ）
+
+## 11. Recording Finalization Transaction の境界（2026-09-24・D 相談への回答）
+
+D 側の「MP4 確定を transaction 最後に制御したい」要望に対し、two-phase finalize を
+`DeferredCommit` opt-in flag（既定 false・既存動作不変）で実装した。詳細・3 案比較・
+D 側の使い方は **統合メモ §8** を参照（integration-notes.md）。
+
+- `RecordingOptions.DeferredCommit` / `RecordingResult.PendingCommit` / `PendingCommitPath` を新設
+- `IRecordingEngine.CommitPendingRecording()` / `AbortPendingRecording()` を新設
+  （Duration 等は stop 完了時点で固定 — Commit をいつ呼んでも同じ値。clock は stop 後も進むため）
+- Dispose は確定待ち staging を削除しない・確定待ちありの再 StartAsync は拒否
+- 実機検証: preparation-cancel-check に Session 4/5 を追加・全 10 項目 PASS。
+  `dotnet test` 443/443（Capture 5 → 7）

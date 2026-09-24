@@ -20,6 +20,17 @@ public sealed class RecordingOptions
 
     /// <summary>マイク録音（R-03）。null で既定マイク。</summary>
     public AudioDevice? MicrophoneDevice { get; init; }
+
+    /// <summary>
+    /// 録画成功時の canonical 置換を caller に委ねる（two-phase finalize・統合メモ §8）。
+    /// false（既定）では従来どおり StopAsync 完了時に staging → canonical へ置換する。
+    /// true では StopAsync が staging パス（<see cref="RecordingResult.PendingCommit"/> = true）を
+    /// 返し、caller が <see cref="ScreenRecorderRecordingEngine.CommitPendingRecording"/> か
+    /// <see cref="ScreenRecorderRecordingEngine.AbortPendingRecording"/> を明示的に呼ぶまで
+    /// canonical は一切変更されない。D 側の Recording Finalization Transaction
+    /// （EventCapture finalize → StepBuilder → validation → project.json save → MP4 確定）用。
+    /// </summary>
+    public bool DeferredCommit { get; init; }
 }
 
 /// <summary>StopAsync の成果物。時間同期の基準を B（Event/Timeline）へ渡す。</summary>
@@ -39,4 +50,15 @@ public sealed class RecordingResult
     /// <summary>Pause していた区間（B が timeline から除外するために保持）。</summary>
     public IReadOnlyList<(TimeSpan Start, TimeSpan End)> PauseIntervals { get; init; } =
         Array.Empty<(TimeSpan, TimeSpan)>();
+
+    /// <summary>
+    /// DeferredCommit モードで録画に成功し、canonical への置換が確定待ちの場合 true。
+    /// このとき <see cref="FilePath"/> は staging パス（正常な MP4 が存在する）であり、
+    /// caller は <see cref="RecordingResult.PendingCommitPath"/>（canonical 予定地）への
+    /// 置換を Commit / Abort で決定する。既定（即時確定）では false で FilePath は canonical。
+    /// </summary>
+    public bool PendingCommit { get; init; }
+
+    /// <summary>DeferredCommit モードでの canonical 予定地（OutputFilePath）。確定済み / 通常モードでは FilePath と同じ。</summary>
+    public string? PendingCommitPath { get; init; }
 }
