@@ -56,9 +56,14 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             var mainAss = Path.Combine(workDir, "steps.ass");
             File.WriteAllText(mainAss, AssSubtitleWriter.Write(intervals, w, h), new System.Text.UTF8Encoding(false));
 
+            // 音声なし録画（契約 §7 では正当）は Title / Ending と concat するとストリーム構成が
+            // 不一致になり壊れ得るため、無音声トラックを補う（監査 m-4 対応）
+            var hasAudio = ProbeHasAudioStream(request.RecordingPath);
+            var (audioInput, audioOutput) = AudioStreamArgs.Build(hasAudio);
+
             var main = Path.Combine(workDir, "main.mp4");
             await RunAsync(
-                $"-y -i \"{request.RecordingPath}\" -vf \"ass=steps.ass\" -c:v {options.Encoder} -pix_fmt yuv420p -c:a copy \"{main}\"",
+                $"-y -i \"{request.RecordingPath}\" {audioInput} -vf \"ass=steps.ass\" -c:v {options.Encoder} -pix_fmt yuv420p {audioOutput} \"{main}\"",
                 workDir,
                 new RunProgressContext(VideoCompositionStage.BurningSubtitles, "Step 字幕を焼き込んでいます…", BaseProgress.BurningSubtitles, BaseProgress.RenderingTitle - BaseProgress.BurningSubtitles, sourceSeconds),
                 options,
@@ -133,6 +138,22 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             p.WaitForExit();
             return text;
         }
+    }
+
+    /// <summary>ffprobe で入力に音声ストリームがあるかを確認する（m-4: 音声なし録画の guard）。</summary>
+    private bool ProbeHasAudioStream(string path)
+    {
+        var ffprobe = Path.Combine(Path.GetDirectoryName(_ffmpegPath)!, "ffprobe.exe");
+        var psi = new ProcessStartInfo(
+            ffprobe, $"-v error -select_streams a -show_entries stream=index -of csv=p=0 \"{path}\"")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        using var p = Process.Start(psi)!;
+        var text = p.StandardOutput.ReadToEnd().Trim();
+        p.WaitForExit();
+        return text.Length > 0;
     }
 
     private double ProbeDurationSeconds(string path)
