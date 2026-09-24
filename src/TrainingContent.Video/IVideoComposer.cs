@@ -10,7 +10,7 @@ public interface IVideoComposer
 {
     /// <summary>
     /// 録画 MP4 に TrainingStep の字幕を焼き込み、Title Screen / Ending を付けて
-    /// <c>output/training_video.mp4</c> を生成する（契約 §17/§20）。
+    /// <c>output/training_video.mp4</c> を生成する（契約 §17・開発計画書 §20）。
     /// </summary>
     Task<VideoCompositionResult> ComposeAsync(
         VideoCompositionRequest request,

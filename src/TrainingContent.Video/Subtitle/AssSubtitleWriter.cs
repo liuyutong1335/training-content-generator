@@ -64,7 +64,7 @@ public static class AssSubtitleWriter
         return sb.ToString();
     }
 
-    /// <summary>Title Screen / Ending 用の中央寄せ 1 枚カード（契約 §20）。</summary>
+    /// <summary>Title Screen / Ending 用の中央寄せ 1 枚カード（開発計画書 §20）。</summary>
     public static string WriteCard(string text, double seconds, int playResX = 1280, int playResY = 720)
     {
         var sb = new StringBuilder();

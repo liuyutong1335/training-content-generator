@@ -215,3 +215,33 @@ D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材�
     integration-smoke 全 4 項目 PASS（差 7ms）。
     **監査残留リスク R-1 も同時に再検証済み** — 現行エンジン（staging + 完了後 Move）での
     通常停止直後の canonical MP4 はロックなし（preparation-cancel-check 判定 5）
+
+---
+
+## 10. 監査 Minor 対応（2026-09-24 開始）
+
+総合監査（`docs/audit-2026-09-18.md` §5「対応分担 A（Liu）」）の Minor 項目に着手。ブランチ: `fix/audit-minor-m7-comments`（以降の Minor 対応もこのブランチで継続）。
+
+- **m-7 ✅（2026-09-24）**: 契約参照コメントの節番号を修正（6 箇所）。
+  - `§11` → `§7`（RecordingInfo Contract）: `IRecordingEngine.cs` StopAsync / `ScreenRecorderRecordingEngine.cs` CaptureStarted 経由の `_startedAtUtc` 上書き箇所
+  - `契約 §20` → `開発計画書 §20`（Phase 6 — Video Generator の MVP 構成）: `IVideoComposer.cs` ComposeAsync / `FfmpegVideoRenderer.cs` 2 箇所 / `AssSubtitleWriter.cs` WriteCard
+  - `IVideoComposer.cs:30` の「契約 §0-6」は契約 §0 の第 6 条（Manual / Video は同一 TrainingProject を入力）を指す正しい参照と確認済みのため修正せず
+  - B 領域（Core / EventCapture）の `§11`（keyboard payload）・`§20`（events.jsonl 例）参照は正しいため対象外
+  - 確認: `dotnet build` 成功（0 警告 0 エラー）。コメントのみの変更のためテスト影響なし
+- **m-4 ✅（2026-09-24）**: 音声なし録画（契約 §7 で正当）と Title / Ending（anullsrc 付き AAC）の concat 不一致 guard。
+  - ffprobe で録画の音声ストリーム有無を探测し、無音声の場合は anullsrc（stereo / 44100Hz・カードと同一仕様）+ AAC で焼き込む
+  - 判定ロジックを `AudioStreamArgs`（pure logic・単体テスト 2 本）に分離
+  - `spike/video-compose-check` に音声なしシナリオ（項目 6/7）を追加・実機全 7 項目 PASS
+- **m-5 ✅（2026-09-24）**: `Project.Recording == null` で字幕 0 件の動画が「成功」として返る問題。
+  - 契約 §6.2 で Recording は Optional だが、Video の入力は契約 §28 どおり Recording + TrainingProject
+  - `CompositionInputGuard.EnsureRecordingPresent`（pure logic・単体テスト 3 本）を新設し、ComposeAsync 冒頭で拒否
+- **m-1 ✅（2026-09-24）**: 準備中（CaptureStarted 前）Pause → Resume の到達性確認と NRE 耐性。
+  - **到達性（監査の未検証事項を実機で回答）**: D の統合 UI（`RecordingView.xaml.cs:144-146`）は準備中の Pause を不可効化
+    （「準備中に Pause すると A/B の Canonical Timeline が壊れるため」）→ 統合アプリでは到達しない。
+    エンジン単独利用（spike ツール等）では到達し得る
+  - **lib の status 遷移（実機）**: 初期化中の `Pause()` は握り潰されず失敗もしない。
+    CaptureStarted は通常どおり発火し、撮影は継続。準備中 Pause は知見 11 の旧クロック領域破棄により
+    Duration に含まれない（Resume 後 ~2 秒録画 → Duration 2.4 秒・PauseIntervals 0 件）。
+    検証: `spike/preparation-cancel-check` に Session 3（準備中 Pause → Resume → 録画）を追加・実機全 7 項目 PASS
+  - **エンジン修正**: `ResumeAsync` の `_pauseStartedAt!.Value` を null 安全化（CaptureStarted 時に
+    Pause 情報が破棄済みでも NRE しない。State は Paused を保持し、Resume で lib.Resume() をそのまま呼ぶ）
