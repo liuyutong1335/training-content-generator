@@ -215,3 +215,16 @@ D 側からの A 側確認（RC-2: preparation 中の Cancel）への回答材�
     integration-smoke 全 4 項目 PASS（差 7ms）。
     **監査残留リスク R-1 も同時に再検証済み** — 現行エンジン（staging + 完了後 Move）での
     通常停止直後の canonical MP4 はロックなし（preparation-cancel-check 判定 5）
+
+---
+
+## 10. 監査 Minor 対応（2026-09-24 開始）
+
+総合監査（`docs/audit-2026-09-18.md` §5「対応分担 A（Liu）」）の Minor 項目に着手。ブランチ: `fix/audit-minor-m7-comments`（以降の Minor 対応もこのブランチで継続）。
+
+- **m-7 ✅（2026-09-24）**: 契約参照コメントの節番号を修正（6 箇所）。
+  - `§11` → `§7`（RecordingInfo Contract）: `IRecordingEngine.cs` StopAsync / `ScreenRecorderRecordingEngine.cs` CaptureStarted 経由の `_startedAtUtc` 上書き箇所
+  - `契約 §20` → `開発計画書 §20`（Phase 6 — Video Generator の MVP 構成）: `IVideoComposer.cs` ComposeAsync / `FfmpegVideoRenderer.cs` 2 箇所 / `AssSubtitleWriter.cs` WriteCard
+  - `IVideoComposer.cs:30` の「契約 §0-6」は契約 §0 の第 6 条（Manual / Video は同一 TrainingProject を入力）を指す正しい参照と確認済みのため修正せず
+  - B 領域（Core / EventCapture）の `§11`（keyboard payload）・`§20`（events.jsonl 例）参照は正しいため対象外
+  - 確認: `dotnet build` 成功（0 警告 0 エラー）。コメントのみの変更のためテスト影響なし

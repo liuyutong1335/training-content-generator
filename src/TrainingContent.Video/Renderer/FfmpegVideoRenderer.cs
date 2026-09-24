@@ -7,7 +7,7 @@ namespace TrainingContent.Video.Renderer;
 
 /// <summary>
 /// FFmpeg プロセスで動画を合成する IVideoComposer 実装（開発計画書 §12 Renderer 相当）。
-/// 構成（契約 §20）: Title Screen → 録画映像（Step 字幕焼き込み）→ Ending。
+/// 構成（開発計画書 §20）: Title Screen → 録画映像（Step 字幕焼き込み）→ Ending。
 /// エンコーダは既定で libopenh264（LGPL 版 ffmpeg に含まれる。libx264 は GPL なので無い）。
 /// </summary>
 public sealed class FfmpegVideoRenderer : IVideoComposer
@@ -64,7 +64,7 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
                 options,
                 cancellationToken);
 
-            // ---- 2. Title Screen / Ending（契約 §20）----
+            // ---- 2. Title Screen / Ending（開発計画書 §20）----
             var titleText = string.IsNullOrWhiteSpace(options.TitleText) ? request.Project.Title : options.TitleText;
             var title = await RenderCardAsync(titleText, options.TitleSeconds, w, h, fps, options, workDir, "title", cancellationToken);
             var ending = await RenderCardAsync(options.EndingText, options.EndingSeconds, w, h, fps, options, workDir, "ending", cancellationToken);
