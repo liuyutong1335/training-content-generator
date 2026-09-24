@@ -61,3 +61,24 @@ cleanup semantics は次のとおり。判定用に **`IsRecording` プロパテ
     writer は書き込みの都度 open/close するため、Dispose 後は EventCapture 自身がハンドルを掴まない）
   - Start 失敗や cancel で不完全になった events.jsonl は canonical と見なさず削除してよい
     （MP4 など Engine 側成果物の取り扱いは A/D 管轄）
+
+## 6. PR #11 後の監査残留 2 件の B 対応（2026-09-24 / feature/event-capture-followup）
+
+D 側の再確認で残っていた既存監査項目 2 点を EventCapture 内で修正した（Phase 0 契約は不変、D 側の代替修正は不要）:
+
+1. **MasterClock のスレッド安全性**: `Pause` / `Resume`（アプリスレッド、`_stateSync` 保持）と
+   `ToCanonicalMs` / `IsPaused` / `NowMs`（ワーカー スレッド）が `MasterClock._pauseIntervals` を
+   非同期に読み書きしており、並行時に「Collection was modified」や torn state による
+   例外・event drop の可能性があった。**全公開メソッドを内部ロックで直列化**して解消。
+   あわせて `OperationCaptureSession._pauseBoundaryMs`（`long?` の非アトミック読み書き、同型の問題）
+   を `Volatile` アクセスの `long`（未設定 = -1）に変更。
+2. **worker Join タイムアウト後の後発 Event**: `Stop()` の `Join(15000)` がタイムアウトしても
+   finalization は進むため、`recording.stopped` の後に mouse / specialKey / shortcut が
+   append されうる問題（textEntry は `_textFlushFinal` で防御済みだったが他の Event 種は未防御）。
+   フラグを全ユーザー Event 対応の `_userEventsFinal` に拡張し、worker 側の append を
+   `_textSync` 直列化 + フラグ検査で阻否。stopped が常に最終行であることが保たれる。
+   - タイムアウト時に破棄されるのは「stop 後の取りこぼし得る後発 Event」のみで、
+     queue に残っていた stop 前の Event は Join が成功する限り従来どおり全件書かれる
+     （`queueに滞留があってもrecording_stoppedは最終行` テストで継続検証）
+- テスト: MasterClock 並行呼び出しテスト（Pause/Resume × ToCanonicalMs を 1 秒間連打）と、
+  Join タイムアウトを WindowFilter 滞留 + 短縮タイムアウトで再現する session テストを追加。全 46/46 PASS。
