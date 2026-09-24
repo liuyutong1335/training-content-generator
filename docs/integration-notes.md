@@ -82,3 +82,29 @@ D 側の再確認で残っていた既存監査項目 2 点を EventCapture 内�
      （`queueに滞留があってもrecording_stoppedは最終行` テストで継続検証）
 - テスト: MasterClock 並行呼び出しテスト（Pause/Resume × ToCanonicalMs を 1 秒間連打）と、
   Join タイムアウトを WindowFilter 滞留 + 短縮タイムアウトで再現する session テストを追加。全 46/46 PASS。
+
+## 7. 監査 Minor 残の B 一括対応（2026-09-24 / feature/event-capture-quality-2）
+
+audit-2026-09-18 の B 担当残留 Minor 5 件を EventCapture 内で修正した（Phase 0 契約は不変）:
+
+1. **MIN-1（seq 重複 / 行破損）**: `EventTimelineWriter` が seq を最終行だけから読むため、
+   クラッシュで半壊した最終行の後に追記すると seq が 1 から再開（§8.1 違反）し、
+   追記が半壊行に連結されて 1 行が完全破損していた。**全行から最大可読 seq を採用** +
+   **開始時に末尾改行を正規化**（半壊行は分離される。半壊行の seq は読めないため再使用になり得るが、
+   1 からやり直すよりベストエフォートで最大可読値を継続する方が良い）。
+2. **MIN-2（KB-2 fail-closed の漏れ）**: UIA の `IsPassword` プロパティ取得例外が
+   `false` に潰れ、パスワード入力が keyCount 採番され得た（§11.1）。`SafeBool` を三値化し、
+   **取得失敗（null）は fail-closed で sensitive 側に倒す**。表示用の `IsKeyboardFocusable` は
+   従来どおり fail-open。
+3. **Enqueue の check-then-act 競合（監査外の新規指摘）**: `IsAddingCompleted` チェックと
+   `Add` の間に `CompleteAdding` が入ると、LL Hook コールバック内で未処理例外 → プロセス墜落の
+   可能性。停止瞬間の入力破棄として握り潰す。
+4. **MIN-5（保留クリックのタイマー世代競合）**: 前の保留のタイマー コールバックが飛行中に
+   保留が更新されると、新しい保留を判定時間待たずに flush しダブルクリックが 2 単発に分裂
+   し得た。**世代カウンタでコールバックの有効性を確認**。
+5. **MIN-6 / RC-6（IsRecording が Start 実行中も true / Start-Dispose 競合）**:
+   `_startCompleted`（volatile）を導入し、**recording.started の書き出し成功後に IsRecording が
+   true になる**よう補正。Stop は `_startCompleted` を要求し、Start 実行中の Dispose は
+   `_startDone` シグナルで完了を待ってから後片付けする（フック設置との競合解消）。
+- テスト: 半壊最終行からの seq 継続テストを追加。EventCapture.Tests 47/47 PASS（2 回実施）。
+  MIN-5 / MIN-6 はレース再現が困難なため実装レビュー + 既存回帰で担保。

@@ -62,13 +62,18 @@ public sealed class EventTimelineWriter
     {
         _path = path;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        // 既存 events.jsonl への追加開始（re-record 等）では seq を前回の最終値から
+        // 既存 events.jsonl への追加開始（re-record 等）では seq を前回の最大値から
         // 続けて採番する（0 に戻すと契約 §8.1 の Seq start 1 / 単調増加に違反する）。
-        _seq = ReadLastSeq(path);
+        _seq = ReadMaxSeq(path);
+        EnsureTrailingNewline(path);
     }
 
-    /// <summary>既存ファイルの最終行から seq を読み取る。読めなければ 0（新規開始）。</summary>
-    private static long ReadLastSeq(string path)
+    /// <summary>
+    /// 既存ファイルの全行から読み取れる seq の最大値を返す（監査 MIN-1）。
+    /// 最終行だけを見る方式だと、クラッシュで最終行が半壊した events.jsonl の追記時に
+    /// seq が 1 から再開（重複）していた。読めない行（破損行）はスキップする。
+    /// </summary>
+    private static long ReadMaxSeq(string path)
     {
         try
         {
@@ -77,36 +82,65 @@ public sealed class EventTimelineWriter
                 return 0;
             }
 
-            string? last = null;
-            using (var reader = new StreamReader(path))
+            long max = 0;
+            using var reader = new StreamReader(path);
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
             {
-                string? line;
-                while ((line = reader.ReadLine()) is not null)
+                if (string.IsNullOrWhiteSpace(line))
                 {
-                    if (!string.IsNullOrWhiteSpace(line))
+                    continue;
+                }
+
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    if (doc.RootElement.TryGetProperty("seq", out var seq) && seq.TryGetInt64(out var value))
                     {
-                        last = line;
+                        max = Math.Max(max, value);
                     }
+                }
+                catch (JsonException)
+                {
+                    // 破損行: seq 不明。最大値の計算から除外するだけにする。
                 }
             }
 
-            if (last is null)
-            {
-                return 0;
-            }
-
-            using var doc = JsonDocument.Parse(last);
-            return doc.RootElement.TryGetProperty("seq", out var seq) && seq.TryGetInt64(out var value)
-                ? value
-                : 0;
+            return max;
         }
         catch (IOException)
         {
             return 0;
         }
-        catch (JsonException)
+    }
+
+    /// <summary>
+    /// クラッシュ等で改行なしに途切れた最終行がある場合、追記がその行に連結されて
+    /// 1 行が完全破損する（監査 MIN-1）。開始時に改行で正規化しておく。
+    /// </summary>
+    private static void EnsureTrailingNewline(string path)
+    {
+        try
         {
-            return 0;
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length == 0)
+            {
+                return;
+            }
+
+            using var stream = info.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+            stream.Seek(-1, SeekOrigin.End);
+            var last = stream.ReadByte();
+            if (last != '\n')
+            {
+                stream.Seek(0, SeekOrigin.End);
+                var newline = System.Text.Encoding.UTF8.GetBytes(Environment.NewLine);
+                stream.Write(newline);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 正規化できなくても追記自体は試みる（次の書き込みで失敗するならそれも従来どおり）。
         }
     }
 

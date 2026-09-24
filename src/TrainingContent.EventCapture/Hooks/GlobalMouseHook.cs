@@ -57,6 +57,12 @@ public sealed class GlobalMouseHook : IDisposable
     private readonly NativeMethods.LowLevelHookProc _callback;
     private PendingLeftClick? _pendingLeftClick;
     private System.Threading.Timer? _pendingLeftClickTimer;
+
+    /// <summary>保留クリックのタイマー世代（監査 MIN-5）。保留が更新されるたびに増やす。
+    /// 前の保留のタイマー コールバックが飛行中のときに新しい保留を置き換えると、
+    /// 飛行中のコールバックが新しい保留を判定時間待たずに flush して
+    /// ダブルクリックが 2 単発に分裂するため、コールバック側で世代一致を確認する。</summary>
+    private int _pendingGeneration;
     private IntPtr _hookHandle;
 
     public GlobalMouseHook()
@@ -135,6 +141,7 @@ public sealed class GlobalMouseHook : IDisposable
                 _pendingLeftClickTimer?.Dispose();
                 _pendingLeftClickTimer = null;
                 _pendingLeftClick = null;
+                _pendingGeneration++; // 飛行中の旧タイマー コールバックを無効化する
                 doubleClick = new ClickCapturedEventArgs(x, y, MouseClickKind.DoubleClick, "left", 2, qpc);
             }
             else
@@ -149,7 +156,17 @@ public sealed class GlobalMouseHook : IDisposable
 
                 _pendingLeftClickTimer?.Dispose();
                 _pendingLeftClick = new PendingLeftClick(x, y, now, qpc);
-                _pendingLeftClickTimer = new System.Threading.Timer(_ => FlushPendingLeftClick(), null, _doubleClickTime, Timeout.InfiniteTimeSpan);
+                _pendingGeneration++;
+                var generation = _pendingGeneration;
+                _pendingLeftClickTimer = new System.Threading.Timer(_ =>
+                {
+                    // このコールバックが飛行中に保留が更新された場合、新しい保留を
+                    // 判定時間待たずに flush しない（監査 MIN-5）。
+                    if (Volatile.Read(ref _pendingGeneration) == generation)
+                    {
+                        FlushPendingLeftClick();
+                    }
+                }, null, _doubleClickTime, Timeout.InfiniteTimeSpan);
             }
         }
 
