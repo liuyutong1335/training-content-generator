@@ -7,7 +7,7 @@ namespace TrainingContent.Video.Renderer;
 
 /// <summary>
 /// FFmpeg プロセスで動画を合成する IVideoComposer 実装（開発計画書 §12 Renderer 相当）。
-/// 構成（契約 §20）: Title Screen → 録画映像（Step 字幕焼き込み）→ Ending。
+/// 構成（開発計画書 §20）: Title Screen → 録画映像（Step 字幕焼き込み）→ Ending。
 /// エンコーダは既定で libopenh264（LGPL 版 ffmpeg に含まれる。libx264 は GPL なので無い）。
 /// </summary>
 public sealed class FfmpegVideoRenderer : IVideoComposer
@@ -33,6 +33,7 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        CompositionInputGuard.EnsureRecordingPresent(request.Project); // m-5: Recording が無いと字幕 0 件で「成功」するため拒否
         options ??= new VideoCompositionOptions();
         if (!File.Exists(request.RecordingPath))
         {
@@ -56,15 +57,20 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             var mainAss = Path.Combine(workDir, "steps.ass");
             File.WriteAllText(mainAss, AssSubtitleWriter.Write(intervals, w, h), new System.Text.UTF8Encoding(false));
 
+            // 音声なし録画（契約 §7 では正当）は Title / Ending と concat するとストリーム構成が
+            // 不一致になり壊れ得るため、無音声トラックを補う（監査 m-4 対応）
+            var hasAudio = ProbeHasAudioStream(request.RecordingPath);
+            var (audioInput, audioOutput) = AudioStreamArgs.Build(hasAudio);
+
             var main = Path.Combine(workDir, "main.mp4");
             await RunAsync(
-                $"-y -i \"{request.RecordingPath}\" -vf \"ass=steps.ass\" -c:v {options.Encoder} -pix_fmt yuv420p -c:a copy \"{main}\"",
+                $"-y -i \"{request.RecordingPath}\" {audioInput} -vf \"ass=steps.ass\" -c:v {options.Encoder} -pix_fmt yuv420p {audioOutput} \"{main}\"",
                 workDir,
                 new RunProgressContext(VideoCompositionStage.BurningSubtitles, "Step 字幕を焼き込んでいます…", BaseProgress.BurningSubtitles, BaseProgress.RenderingTitle - BaseProgress.BurningSubtitles, sourceSeconds),
                 options,
                 cancellationToken);
 
-            // ---- 2. Title Screen / Ending（契約 §20）----
+            // ---- 2. Title Screen / Ending（開発計画書 §20）----
             var titleText = string.IsNullOrWhiteSpace(options.TitleText) ? request.Project.Title : options.TitleText;
             var title = await RenderCardAsync(titleText, options.TitleSeconds, w, h, fps, options, workDir, "title", cancellationToken);
             var ending = await RenderCardAsync(options.EndingText, options.EndingSeconds, w, h, fps, options, workDir, "ending", cancellationToken);
@@ -133,6 +139,22 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             p.WaitForExit();
             return text;
         }
+    }
+
+    /// <summary>ffprobe で入力に音声ストリームがあるかを確認する（m-4: 音声なし録画の guard）。</summary>
+    private bool ProbeHasAudioStream(string path)
+    {
+        var ffprobe = Path.Combine(Path.GetDirectoryName(_ffmpegPath)!, "ffprobe.exe");
+        var psi = new ProcessStartInfo(
+            ffprobe, $"-v error -select_streams a -show_entries stream=index -of csv=p=0 \"{path}\"")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        using var p = Process.Start(psi)!;
+        var text = p.StandardOutput.ReadToEnd().Trim();
+        p.WaitForExit();
+        return text.Length > 0;
     }
 
     private double ProbeDurationSeconds(string path)

@@ -21,7 +21,7 @@ public interface IRecordingEngine
     Task ResumeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 録画を停止し、Recording を確定する（契約 §11: raw/recording.mp4 + project.json の RecordingInfo）。
+    /// 録画を停止し、Recording を確定する（契約 §7: RecordingInfo Contract）。
     /// 録画完了時に RecordingResult を返す。
     /// </summary>
     Task<RecordingResult> StopAsync(CancellationToken cancellationToken = default);

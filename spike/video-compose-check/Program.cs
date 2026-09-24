@@ -92,10 +92,43 @@ internal static class Program
         var diffRatio = FrameDiffRatio(srcFrame, outFrame);
         Check(4, $"Step 区間フレームの画素差 {diffRatio:P2}（字幕焼き込み確認）", diffRatio > 0.01);
 
+        // ---- Step 6〜7: 音声なし録画の合成（監査 m-4 対応の実機検証）----
+        // 契約 §7 では音声なし録画も正当。Title / Ending（anullsrc 付き）との concat で
+        // ストリーム構成が不一致になり壊れ得るため、無音声トラック補てつの実機確認を行う。
+        var sourceNoAudio = Path.Combine(workDir, "source-noaudio.mp4");
+        Run(ffmpeg, $"-y -f lavfi -i testsrc=duration=10:size=1280x720:rate=30 -c:v libopenh264 -pix_fmt yuv420p \"{sourceNoAudio}\"");
+        var outputNoAudio = Path.Combine(workDir, "training_video_noaudio.mp4");
+        var resultNoAudio = renderer.ComposeAsync(
+            new VideoCompositionRequest
+            {
+                RecordingPath = sourceNoAudio,
+                OutputPath = outputNoAudio,
+                Project = project,
+            }).GetAwaiter().GetResult();
+        Check(6, "音声なし録画の合成がエラーなく完了", File.Exists(outputNoAudio) && new FileInfo(outputNoAudio).Length > 0);
+        Check(7, $"音声なし録画の出力にも音声トラックが存在し Duration 一致（{resultNoAudio.DurationSeconds:F2}s / 期待 15.00s）",
+            Math.Abs(resultNoAudio.DurationSeconds - 15.0) <= 0.5 && HasAudioStream(ffmpeg, outputNoAudio));
+
         Console.WriteLine(_failCount == 0
-            ? "\n全 5 項目 PASS — R-05 MVP（契約 §20 構成・FFmpeg + ASS 焼き込み・進捗報告）はモジュールとして成立"
+            ? "\n全 7 項目 PASS — R-05 MVP（契約 §20 構成・FFmpeg + ASS 焼き込み・進捗報告・音声なし録画 guard）はモジュールとして成立"
             : $"\n{_failCount} 項目 NG");
         return _failCount == 0 ? 0 : 1;
+    }
+
+    /// <summary>ffprobe で音声ストリームの存在を確認する（m-4: 音声なし録画の出力検査）。</summary>
+    private static bool HasAudioStream(string ffmpeg, string path)
+    {
+        var ffprobe = Path.Combine(Path.GetDirectoryName(ffmpeg)!, "ffprobe.exe");
+        var psi = new ProcessStartInfo(
+            ffprobe, $"-v error -select_streams a -show_entries stream=index -of csv=p=0 \"{path}\"")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        using var p = Process.Start(psi)!;
+        var text = p.StandardOutput.ReadToEnd().Trim();
+        p.WaitForExit();
+        return text.Length > 0;
     }
 
     /// <summary>同一時刻の 2 フレーム間の「変化画素の割合」を返す（字幕焼き込みの有無判定用）。</summary>
