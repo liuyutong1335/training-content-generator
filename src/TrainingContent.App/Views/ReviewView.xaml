@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="TrainingContent.App.Views.ReviewView"
+<UserControl x:Class="TrainingContent.App.Views.ReviewView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid Margin="28,24">
@@ -44,7 +44,9 @@
                            TextWrapping="Wrap" />
             </StackPanel>
 
-            <!-- ===== Review 本体（読み取り専用） ===== -->
+            <!-- ===== Review 本体（編集可能） =====
+                 editable control は detached draft（ReviewDraftStep）にのみ bind する。
+                 canonical TrainingStep へは OneWay の読み取り表示も含めて直接 bind しない。 -->
             <Grid x:Name="ReviewPanel" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="280" />
@@ -52,13 +54,34 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <!-- ===== Step List ===== -->
+                <!-- ===== Step List + 並べ替え / 削除 ===== -->
                 <DockPanel Grid.Column="0">
                     <TextBlock DockPanel.Dock="Top"
                                Text="手順一覧"
                                FontSize="11"
                                Foreground="#FF888888"
                                Margin="0,0,0,6" />
+                    <StackPanel DockPanel.Dock="Bottom"
+                                Orientation="Horizontal"
+                                Margin="0,8,0,0">
+                        <Button x:Name="MoveUpButton"
+                                Content="↑"
+                                Width="40" Height="28"
+                                ToolTip="選択中の手順を上へ移動"
+                                Click="MoveUp_Click" />
+                        <Button x:Name="MoveDownButton"
+                                Content="↓"
+                                Width="40" Height="28"
+                                Margin="6,0,0,0"
+                                ToolTip="選択中の手順を下へ移動"
+                                Click="MoveDown_Click" />
+                        <Button x:Name="DeleteStepButton"
+                                Content="削除"
+                                Width="64" Height="28"
+                                Margin="6,0,0,0"
+                                ToolTip="選択中の手順を削除（保存するまで確定しません）"
+                                Click="DeleteStep_Click" />
+                    </StackPanel>
                     <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White">
                         <ListBox x:Name="StepListBox"
                                  BorderThickness="0"
@@ -66,9 +89,9 @@
                                  SelectionChanged="StepListBox_SelectionChanged">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
-                                    <!-- 表示のみ。TrainingStep の editable property へ TwoWay binding しない。 -->
+                                    <!-- 表示のみ。bind 先は draft であり canonical TrainingStep ではない。 -->
                                     <TextBlock TextWrapping="Wrap">
-                                        <Run Text="{Binding Order, Mode=OneWay}" /><Run Text=". " /><Run Text="{Binding Title, Mode=OneWay}" />
+                                        <Run Text="{Binding DisplayOrder, Mode=OneWay}" /><Run Text=". " /><Run Text="{Binding Title, Mode=OneWay}" />
                                     </TextBlock>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -76,11 +99,12 @@
                     </Border>
                 </DockPanel>
 
-                <!-- ===== Step Detail + Screenshot Preview ===== -->
+                <!-- ===== Step Editor + Screenshot Preview ===== -->
                 <Grid Grid.Column="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*" />
                         <RowDefinition Height="16" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
@@ -90,109 +114,144 @@
                                    FontSize="11"
                                    Foreground="#FF888888"
                                    Margin="0,0,0,6" />
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel>
-
-                                <StackPanel Orientation="Horizontal">
-                                    <StackPanel Margin="0,0,48,0">
-                                        <TextBlock Text="順序" FontSize="11" Foreground="#FF888888" />
-                                        <TextBlock x:Name="OrderText" Margin="0,3,0,0" Foreground="#FF333333" />
-                                    </StackPanel>
-                                    <StackPanel Margin="0,0,48,0">
-                                        <TextBlock Text="開始" FontSize="11" Foreground="#FF888888" />
-                                        <TextBlock x:Name="StartMsText" Margin="0,3,0,0" Foreground="#FF333333" />
-                                    </StackPanel>
-                                    <StackPanel>
-                                        <TextBlock Text="終了" FontSize="11" Foreground="#FF888888" />
-                                        <TextBlock x:Name="EndMsText" Margin="0,3,0,0" Foreground="#FF333333" />
-                                    </StackPanel>
-                                </StackPanel>
-
-                                <StackPanel Margin="0,18,0,0">
-                                    <TextBlock Text="タイトル" FontSize="11" Foreground="#FF888888" />
-                                    <TextBlock x:Name="TitleText"
-                                               Margin="0,3,0,0"
-                                               FontSize="15"
-                                               FontWeight="SemiBold"
-                                               Foreground="#FF1F2933"
-                                               TextWrapping="Wrap" />
-                                </StackPanel>
-
-                                <StackPanel Margin="0,18,0,0">
-                                    <TextBlock Text="操作" FontSize="11" Foreground="#FF888888" />
-                                    <TextBlock x:Name="ActionText" Margin="0,3,0,0" Foreground="#FF333333" TextWrapping="Wrap" />
-                                </StackPanel>
-
-                                <StackPanel Margin="0,18,0,0">
-                                    <TextBlock Text="対象" FontSize="11" Foreground="#FF888888" />
-                                    <TextBlock x:Name="TargetText" Margin="0,3,0,0" Foreground="#FF333333" TextWrapping="Wrap" />
-                                </StackPanel>
-
-                                <StackPanel Margin="0,18,0,0">
-                                    <TextBlock Text="説明" FontSize="11" Foreground="#FF888888" />
-                                    <!-- 長文は選択できるよう read-only TextBox を使う（binding は使わず code-behind で設定）。 -->
-                                    <TextBox x:Name="DescriptionText"
-                                             Margin="0,3,0,0"
-                                             Height="64"
-                                             IsReadOnly="True"
-                                             AcceptsReturn="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             Foreground="#FF333333" />
-                                </StackPanel>
-
-                                <StackPanel Margin="0,18,0,0">
-                                    <TextBlock Text="注意" FontSize="11" Foreground="#FF888888" />
-                                    <TextBox x:Name="CautionText"
-                                             Margin="0,3,0,0"
-                                             Height="48"
-                                             IsReadOnly="True"
-                                             AcceptsReturn="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             Foreground="#FF333333" />
-                                </StackPanel>
-
-                                <StackPanel Margin="0,18,0,0">
-                                    <TextBlock Text="期待される結果" FontSize="11" Foreground="#FF888888" />
-                                    <TextBox x:Name="ExpectedResultText"
-                                             Margin="0,3,0,0"
-                                             Height="48"
-                                             IsReadOnly="True"
-                                             AcceptsReturn="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             Foreground="#FF333333" />
-                                </StackPanel>
-
+                        <Grid>
+                            <!-- 選択なし（全件削除後など） -->
+                            <StackPanel x:Name="EditorEmptyPanel" Visibility="Collapsed">
+                                <TextBlock Text="手順が選択されていません。"
+                                           Foreground="#FF888888"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="EditorEmptyHint"
+                                           Margin="0,8,0,0"
+                                           Foreground="#FF888888"
+                                           TextWrapping="Wrap"
+                                           Visibility="Collapsed" />
                             </StackPanel>
-                        </ScrollViewer>
+
+                            <ScrollViewer x:Name="EditorContentPanel" VerticalScrollBarVisibility="Auto">
+                                <!-- DataContext は選択中の ReviewDraftStep（code-behind が設定する）。 -->
+                                <StackPanel x:Name="EditorPanel">
+
+                                    <StackPanel Orientation="Horizontal">
+                                        <StackPanel Margin="0,0,48,0">
+                                            <TextBlock Text="順序" FontSize="11" Foreground="#FF888888" />
+                                            <TextBlock Text="{Binding DisplayOrder, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF333333" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,48,0">
+                                            <TextBlock Text="開始" FontSize="11" Foreground="#FF888888" />
+                                            <TextBlock Text="{Binding StartMsText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF333333" />
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="終了" FontSize="11" Foreground="#FF888888" />
+                                            <TextBlock Text="{Binding EndMsText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF333333" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="タイトル" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="TitleBox"
+                                                 Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 FontSize="15"
+                                                 TextWrapping="Wrap"
+                                                 Foreground="#FF1F2933" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="操作" FontSize="11" Foreground="#FF888888" />
+                                        <TextBlock Text="{Binding ActionText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF555555" TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="対象" FontSize="11" Foreground="#FF888888" />
+                                        <TextBlock Text="{Binding TargetText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF555555" TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="説明" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="DescriptionBox"
+                                                 Text="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 Height="64"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Foreground="#FF333333" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="注意" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="CautionBox"
+                                                 Text="{Binding Caution, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 Height="48"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Foreground="#FF333333" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="期待される結果" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="ExpectedResultBox"
+                                                 Text="{Binding ExpectedResult, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 Height="48"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Foreground="#FF333333" />
+                                    </StackPanel>
+
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
                     </DockPanel>
 
-                    <!-- ===== Screenshot Preview ===== -->
+                    <!-- ===== Screenshot Preview（placeholder を維持: path resolver / 画像読込は未実装） ===== -->
                     <DockPanel Grid.Row="2">
                         <TextBlock DockPanel.Dock="Top"
                                    Text="スクリーンショット"
                                    FontSize="11"
                                    Foreground="#FF888888"
                                    Margin="0,0,0,6" />
-                        <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White" Height="160">
+                        <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White" Height="120">
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <TextBlock x:Name="ScreenshotPlaceholder"
+                                <TextBlock Text="{Binding ScreenshotPlaceholderText, Mode=OneWay}"
                                            Foreground="#FF888888"
                                            HorizontalAlignment="Center"
                                            TextWrapping="Wrap"
                                            TextAlignment="Center" />
-                                <TextBlock x:Name="ScreenshotPathText"
+                                <TextBlock Text="{Binding ScreenshotPathText, Mode=OneWay}"
                                            Margin="0,8,0,0"
                                            FontSize="11"
                                            Foreground="#FFAAAAAA"
                                            HorizontalAlignment="Center"
                                            TextAlignment="Center"
-                                           TextWrapping="Wrap"
-                                           Visibility="Collapsed" />
+                                           TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
+                    </DockPanel>
+
+                    <!-- ===== Status + Save / Discard ===== -->
+                    <DockPanel Grid.Row="3" Margin="0,12,0,0">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button x:Name="DiscardButton"
+                                    Content="変更を破棄"
+                                    Width="104" Height="30"
+                                    ToolTip="編集内容を捨てて保存済みの内容に戻します"
+                                    Click="Discard_Click" />
+                            <Button x:Name="SaveButton"
+                                    Content="保存"
+                                    Width="104" Height="30"
+                                    Margin="8,0,0,0"
+                                    FontWeight="SemiBold"
+                                    Click="Save_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="ReviewStatusText"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,12,0"
+                                   Foreground="#FF555555"
+                                   TextWrapping="Wrap" />
                     </DockPanel>
 
                 </Grid>

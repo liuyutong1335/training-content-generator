@@ -57,9 +57,10 @@ public partial class MainWindow : Window
         _recordingView = new RecordingView(recordingCoordinator, currentProject);
         _recordingView.StatusChanged += OnStatusChanged;
 
-        // Review は Current Project を読み取り専用で表示する（編集は後続 B1）。
-        // 他 View と同じく constructor injection で受け取り、ここで path を組み立てない。
-        _reviewView = new ReviewView(currentProject);
+        // Review は Current Project の Steps を編集する（B1）。editable control は detached draft に
+        // だけ bind し、保存は ProjectWorkspace 経由でのみ行う。他 View と同じく constructor injection。
+        _reviewView = new ReviewView(currentProject, workspace);
+        _reviewView.StatusChanged += OnStatusChanged;
 
         _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator);
         _contentsView.StatusChanged += OnStatusChanged;
@@ -108,6 +109,7 @@ public partial class MainWindow : Window
     /// <summary>録画中は終了させない（自動 Stop は行わない。ユーザーが録画を停止してから閉じる）。</summary>
     protected override void OnClosing(CancelEventArgs e)
     {
+        // 録画 session の lock を先に判定する（録画中は編集の確認より優先して終了を止める）。
         if (_recordingCoordinator.IsSessionActive)
         {
             MessageBox.Show(
@@ -121,19 +123,65 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 保存中は終了させない（保存は進行中で、破棄の同意と実体が食い違うため）。
+        if (_reviewView.IsSaving)
+        {
+            MessageBox.Show(
+                this,
+                "手順を保存しています。完了してから終了してください。",
+                "手順の編集",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            e.Cancel = true;
+            return;
+        }
+
+        // Review に未保存の編集がある場合は破棄の同意を取る。
+        if (_reviewView.HasUnsavedChanges
+            && MessageBox.Show(
+                this,
+                "手順の編集内容が保存されていません。破棄して終了しますか？",
+                "手順の編集",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Warning) != MessageBoxResult.OK)
+        {
+            e.Cancel = true;
+            return;
+        }
+
         base.OnClosing(e);
     }
 
     private void NavHome_Click(object sender, RoutedEventArgs e) => NavigateHome();
 
-    private void NavRecording_Click(object sender, RoutedEventArgs e) =>
-        ShowPage(NavRecordingButton, _recordingView);
+    private void NavRecording_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmLeaveReviewIfNeeded(_recordingView))
+        {
+            return;
+        }
 
-    private void NavReview_Click(object sender, RoutedEventArgs e) =>
+        ShowPage(NavRecordingButton, _recordingView);
+    }
+
+    private void NavReview_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmLeaveReviewIfNeeded(_reviewView))
+        {
+            return;
+        }
+
         ShowPage(NavReviewButton, _reviewView);
+    }
 
     private async void NavContents_Click(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmLeaveReviewIfNeeded(_contentsView))
+        {
+            return;
+        }
+
         ShowPage(NavContentsButton, _contentsView);
 
         // 初回表示時に一度だけ読み込む。2 回目以降の navigation では再走査しない。
@@ -141,7 +189,30 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Home へ遷移する。Project の作成・オープン後の遷移もここを通る。</summary>
-    private void NavigateHome() => ShowPage(NavHomeButton, _homeView);
+    private void NavigateHome()
+    {
+        if (!ConfirmLeaveReviewIfNeeded(_homeView))
+        {
+            return;
+        }
+
+        ShowPage(NavHomeButton, _homeView);
+    }
+
+    /// <summary>
+    /// Review から他の View へ移る前に、未保存の編集がないか確認する（B1 の navigation 保護）。
+    /// Review に留まる / Review へ向かう場合と、そもそも Review を表示していない場合は確認しない。
+    /// </summary>
+    /// <returns>true = 遷移してよい。false = Review に留まる。</returns>
+    private bool ConfirmLeaveReviewIfNeeded(UserControl targetView)
+    {
+        if (ReferenceEquals(targetView, _reviewView) || !ReferenceEquals(PageHost.Content, _reviewView))
+        {
+            return true;
+        }
+
+        return _reviewView.ConfirmDiscardIfNeeded();
+    }
 
     private void OnStatusChanged(object? sender, string message) => StatusText.Text = message;
 
