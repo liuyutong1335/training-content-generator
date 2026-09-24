@@ -36,6 +36,19 @@ public interface IRecordingEngine
     /// （StartAsync 呼び出しから撮影開始まで ~2 秒かかるため）。
     /// </summary>
     event EventHandler? CaptureStarted;
+
+    /// <summary>
+    /// DeferredCommit モード（<see cref="RecordingOptions.DeferredCommit"/>）で確定待ちの録画を
+    /// canonical へ確定する（staging → canonical の Move）。two-phase finalize の Commit 相当。
+    /// 失敗時は staging が保持され、例外で通知される。通常モードでは呼べない。
+    /// </summary>
+    RecordingResult CommitPendingRecording();
+
+    /// <summary>
+    /// DeferredCommit モードで確定待ちの録画を破棄する（staging 削除のみ・canonical は無変更）。
+    /// two-phase finalize の Abort 相当。通常モードでは呼べない。
+    /// </summary>
+    void AbortPendingRecording();
 }
 
 public enum RecordingState

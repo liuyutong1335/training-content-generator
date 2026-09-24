@@ -60,4 +60,20 @@ public class RecordingEngineStateTests
         Assert.EndsWith(".mp4", staging, StringComparison.Ordinal);
         Assert.Contains(".staging-", staging);
     }
+
+    // ---- two-phase finalize（統合メモ §8・DeferredCommit）----
+
+    [Fact]
+    public void CommitPendingRecording_確定待ちが無い場合は拒否()
+    {
+        using var engine = new ScreenRecorderRecordingEngine();
+        Assert.Throws<InvalidOperationException>(() => engine.CommitPendingRecording());
+    }
+
+    [Fact]
+    public void AbortPendingRecording_確定待ちが無い場合は拒否()
+    {
+        using var engine = new ScreenRecorderRecordingEngine();
+        Assert.Throws<InvalidOperationException>(() => engine.AbortPendingRecording());
+    }
 }
