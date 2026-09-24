@@ -192,4 +192,71 @@ public class OperationCaptureSessionTests : IDisposable
         Assert.Contains(lines, line => line.Contains("\"recording.paused\""));
         Assert.Contains(lines, line => line.Contains("\"recording.resumed\""));
     }
+
+    [Fact]
+    public void ワーカーのJoinがタイムアウトしてもrecording_stoppedは最終行_後発Eventは破棄される()
+    {
+        // 監査指摘 §2: worker の Join(15000) タイムアウト後も finalization が進むため、
+        // recording.stopped の後に mouse / specialKey / shortcut が append されうる問題。
+        // WindowFilter を worker の滞留ポイント（IsFiltered 内、ロック非保持）に使い、
+        // Stop を Join タイムアウトさせてから worker を解放し、後発 Event が破棄されることを確認する。
+        using var workerStuck = new ManualResetEventSlim();
+        using var releaseWorker = new ManualResetEventSlim();
+
+        using var session = new OperationCaptureSession(
+            _directory,
+            new OperationCaptureOptions
+            {
+                // 解放までは worker をフィルタ内で滞留させ、解放後は通す
+                // （UIA + スクリーンショットを経て Append まで進ませる）。
+                WindowFilter = _ =>
+                {
+                    workerStuck.Set();
+                    releaseWorker.Wait(5000);
+                    return false;
+                }
+            });
+        session.Start();
+        session.WorkerJoinTimeoutForTest = 500;
+
+        session.EnqueueMouseClickForTest(500, 500);
+        Assert.True(workerStuck.Wait(5000), "ワーカーがフィルタに到達していない");
+
+        // Join がタイムアウトしても Stop は完了する。
+        var durationMs = session.Stop();
+
+        var lines = File.ReadAllLines(_eventsPath);
+        Assert.Equal("recording.stopped", GetEventType(lines[^1]));
+        Assert.Equal(durationMs, GetEventTimestamp(lines[^1]));
+
+        // worker を解放: 後追いで進んだ mouse.click は recording.stopped の後に
+        // 書かれることなく破棄されること。
+        releaseWorker.Set();
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (session.IsWorkerAliveForTest && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(50);
+        }
+
+        Assert.False(session.IsWorkerAliveForTest);
+
+        lines = File.ReadAllLines(_eventsPath);
+        Assert.Equal("recording.stopped", GetEventType(lines[^1]));
+        Assert.DoesNotContain(lines, line => line.Contains("mouse.click") && line.Contains("\"x\": 500"));
+
+        // Join タイムアウト後の Dispose も安全に完了すること（ハングしない）。
+        session.Dispose();
+    }
+
+    private static string GetEventType(string line)
+    {
+        using var doc = JsonDocument.Parse(line);
+        return doc.RootElement.GetProperty("type").GetString()!;
+    }
+
+    private static long GetEventTimestamp(string line)
+    {
+        using var doc = JsonDocument.Parse(line);
+        return doc.RootElement.GetProperty("timestampMs").GetInt64();
+    }
 }

@@ -49,16 +49,27 @@ public sealed class OperationCaptureSession : IDisposable
     private Thread? _hookThread;
     private Thread? _worker;
     private Exception? _hookInitError;
-    private long? _pauseBoundaryMs;
+
+    /// <summary>Pause 時点の Canonical 時刻（境界フィルタ用）。未設定は -1。
+    /// アプリスレッドが書き / ワーカーが読むため Volatile でアクセスする
+    /// （long? のままだと非アトミック読み書きになる。MasterClock の監査指摘と同型）。</summary>
+    private long _pauseBoundaryMs = -1;
     private (UiElementInfo? Element, string? ProcessName, string? WindowTitle) _textTarget;
     private string? _lastTextWindowKey;
     private bool _started;
     private bool _stopped;
     private bool _startFailed;
 
-    /// <summary>Stop の最終 flush 後に worker 側の textEntry 追加を禁止するフラグ
-    /// （recording.stopped より後への keyboard.textEntry 書き込みを防ぐ）。</summary>
-    private bool _textFlushFinal;
+    /// <summary>Stop の最終 flush 後に worker 側のユーザー Event 追加を禁止するフラグ
+    /// （recording.stopped より後への mouse.* / keyboard.* 書き込みを防ぐ）。
+    /// textEntry に限らず特殊キー / ショートカット / マウスも対象（監査指摘:
+    /// worker の Join(15000) タイムアウト後も finalization が進むため、stopped
+    /// より後への append をフラグで構造的に阻否する）。_textSync で守る。</summary>
+    private bool _userEventsFinal;
+
+    /// <summary>テスト用: Stop 時の worker Join 待ち時間（タイムアウト後の
+    /// finalization 継続を短時間で再現するため）。実運用は 15 秒。</summary>
+    internal long WorkerJoinTimeoutForTest { get; set; } = 15000;
 
     /// <summary>キー受領から処理までの遅延がこれを超えたら Password 判定を信頼せず
     /// sensitive に倒す（fail-closed。処理時点のフォーカスは入力時点と異なりうる）。</summary>
@@ -164,7 +175,7 @@ public sealed class OperationCaptureSession : IDisposable
             ThrowIfNotRunning();
             FlushTextBuffer();
             _clock.Pause();
-            _pauseBoundaryMs = _clock.NowMs();
+            Volatile.Write(ref _pauseBoundaryMs, _clock.NowMs());
             _writer!.Append("recording.paused", _clock.NowMs(), new { });
         }
     }
@@ -226,14 +237,18 @@ public sealed class OperationCaptureSession : IDisposable
                 var durationMs = _clock.NowMs();
 
                 _queue.CompleteAdding();
-                _worker?.Join(15000); // 終端イベントの取りこぼし防止（UIA・撮影は 1 Event 百ms 級）
+                _worker?.Join((int)WorkerJoinTimeoutForTest); // 終端イベントの取りこぼし防止（UIA・撮影は 1 Event 百ms 級）
+                // Join がタイムアウトしても finalization は進める（指摘 §2）。
+                // タイムアウトした場合、worker は後続のユーザー Event をまだ処理しうるが、
+                // FlushTextBuffer(final:) が設定する _userEventsFinal フラグ以降の
+                // worker 側 append は全て破棄されるため、stopped が最終行であることが保たれる。
 
                 // textEntry バーストはワーカーが queue を処理し終わった後に締め切る。
                 // drain 前に flush すると queue 残存イベントより古い textEntry が先に
                 // 書かれ、ファイル行順の timestampMs 非減少が崩れるため。
                 // （ワーカーの各処理パスは書き込み直前に flush 済みなので、ここで残るのは
                 //   最後の Text キーで始まった未締め切りバーストのみ）
-                // final: 以降の worker 側 textEntry 追加を禁止する（stopped が最終行であることの保証）。
+                // final: 以降の worker 側ユーザー Event 追加を禁止する（stopped が最終行であることの保証）。
                 FlushTextBuffer(final: true);
 
                 _writer?.Append("recording.stopped", durationMs, new { });
@@ -372,8 +387,8 @@ public sealed class OperationCaptureSession : IDisposable
         // さらに Pause より前に発生していながら処理が追いつかなかった
         // 後追いイベント（例: P 押下自体のキーダウン）も破棄する。
         // 境界そのもの（==）は Pause 中に発生した Event の凍結 timestampMs なので破棄対象に含める。
-        var boundary = _pauseBoundaryMs;
-        if (_clock.IsPaused || (boundary.HasValue && timestampMs <= boundary.Value))
+        var boundary = Volatile.Read(ref _pauseBoundaryMs);
+        if (_clock.IsPaused || (boundary >= 0 && timestampMs <= boundary))
         {
             return;
         }
@@ -408,7 +423,7 @@ public sealed class OperationCaptureSession : IDisposable
             _ => "mouse.click"
         };
 
-        _writer!.Append(eventType, timestampMs, new MousePayload(
+        AppendUserEvent(eventType, timestampMs, new MousePayload(
             item.X,
             item.Y,
             item.ClickType == MouseClickKind.RightClick ? "right" : "left",
@@ -451,7 +466,7 @@ public sealed class OperationCaptureSession : IDisposable
 
                 lock (_textSync)
                 {
-                    if (_textFlushFinal)
+                    if (_userEventsFinal)
                     {
                         // Stop の最終 flush 後に到達したキー。バーストを再開すると
                         // recording.stopped より後へ書かれるため破棄する。
@@ -482,18 +497,18 @@ public sealed class OperationCaptureSession : IDisposable
 
             case KeyboardInputKind.SpecialKey:
                 FlushTextBuffer();
-                _writer!.Append("keyboard.specialKey", timestampMs, new SpecialKeyPayload(item.KeyName ?? "Unknown"));
+                AppendUserEvent("keyboard.specialKey", timestampMs, new SpecialKeyPayload(item.KeyName ?? "Unknown"));
                 break;
 
             case KeyboardInputKind.Shortcut:
                 FlushTextBuffer();
-                _writer!.Append("keyboard.shortcut", timestampMs, new ShortcutPayload(item.ShortcutName ?? "Unknown"));
+                AppendUserEvent("keyboard.shortcut", timestampMs, new ShortcutPayload(item.ShortcutName ?? "Unknown"));
                 break;
         }
     }
 
     /// <summary>保持中の textEntry バーストを締め切って events.jsonl に出力する。</summary>
-    /// <param name="final">Stop の締め切りの場合 true。以降の textEntry 追加を禁止する。</param>
+    /// <param name="final">Stop の締め切りの場合 true。以降のユーザー Event 追加を禁止する。</param>
     private void FlushTextBuffer(bool final = false)
     {
         if (_writer is null)
@@ -512,8 +527,27 @@ public sealed class OperationCaptureSession : IDisposable
             _lastTextWindowKey = null;
             if (final)
             {
-                _textFlushFinal = true;
+                _userEventsFinal = true;
             }
+        }
+    }
+
+    /// <summary>
+    /// ユーザー Event（mouse.* / keyboard.specialKey / keyboard.shortcut）を events.jsonl へ出力する。
+    /// Stop の最終 flush（_userEventsFinal 設定）と同じロックで直列化するため、
+    /// worker の Join がタイムアウトして処理が後追いで進んでも
+    /// recording.stopped より後へ書かれることはない（監査指摘 §2）。
+    /// </summary>
+    private void AppendUserEvent(string type, long timestampMs, object? payload)
+    {
+        lock (_textSync)
+        {
+            if (_userEventsFinal || _writer is null)
+            {
+                return;
+            }
+
+            _writer.Append(type, timestampMs, payload);
         }
     }
 
