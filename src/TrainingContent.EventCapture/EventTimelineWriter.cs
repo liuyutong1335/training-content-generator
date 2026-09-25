@@ -58,6 +58,12 @@ public sealed class EventTimelineWriter
     private readonly object _sync = new();
     private long _seq;
 
+    /// <summary>書き込み失敗（共有違反など一時的 IOException）時の再試行回数。</summary>
+    private const int MaxWriteAttempts = 12;
+
+    /// <summary>再試行の待ち時間。10ms から倍々で 500ms に頭打ちする（合計最長約 4 秒）。</summary>
+    private static int RetryDelayMs(int attempt) => Math.Min(500, 10 * (1 << attempt));
+
     public EventTimelineWriter(string path)
     {
         _path = path;
@@ -147,16 +153,37 @@ public sealed class EventTimelineWriter
     public string FilePath => _path;
 
     /// <summary>1 行追加する。戻り値は採番された seq と Event Id。</summary>
+    /// <remarks>
+    /// seq は書き込みが成功したときだけ進む。(events.jsonl は別プロセス / Defender 等の
+    ///  FileShare.Read ハンドルによって一時的に書き込み不能になり得る。その間は
+    ///  短いバックオフで再試行し、それでも失敗したら例外として伝播させる。このとき
+    ///  seq を先に進めてしまうと、ファイル上の行と seq が永続的にズレるため)。
+    /// </remarks>
     public (long Seq, Guid Id) Append(string type, long timestampMs, object? payload)
     {
         lock (_sync)
         {
-            _seq++;
+            var candidateSeq = _seq + 1;
             var id = Guid.NewGuid();
             var line = JsonSerializer.Serialize(
-                new TimelineEventLine(1, id, _seq, timestampMs, type, payload ?? new { }),
+                new TimelineEventLine(1, id, candidateSeq, timestampMs, type, payload ?? new { }),
                 Options);
-            File.AppendAllText(_path, line + Environment.NewLine);
+
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    File.AppendAllText(_path, line + Environment.NewLine);
+                    break;
+                }
+                catch (IOException) when (attempt < MaxWriteAttempts - 1)
+                {
+                    // 共有違反（一時的）: 少し待って再試行する。
+                    Thread.Sleep(RetryDelayMs(attempt));
+                }
+            }
+
+            _seq = candidateSeq;
             return (_seq, id);
         }
     }
