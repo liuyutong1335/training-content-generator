@@ -44,10 +44,12 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
         try
         {
             // ---- 0. 入力解析: 出力サイズ/fps は録画に合わせる（concat の一致要件）----
+            // probe は同期だと ffprobe 4〜5 本分（実機で最大約 30 秒）caller thread を block するため
+            // 非同期 + キャンセル対応にする（D 側 WPF Coordinator は UI context から呼ぶため）
             Report(options, VideoCompositionStage.AnalyzingInput, "録画を解析しています…", 0.0);
-            var source = ProbeVideoInfo(request.RecordingPath);
+            var source = await ProbeVideoInfoAsync(request.RecordingPath, cancellationToken).ConfigureAwait(false);
             var (w, h, fps) = source;
-            var sourceSeconds = ProbeDurationSeconds(request.RecordingPath);
+            var sourceSeconds = await ProbeDurationSecondsAsync(request.RecordingPath, cancellationToken).ConfigureAwait(false);
 
             // ---- 1. メイン: Step 字幕の焼き込み（Canonical Timeline のまま = シフト不要）----
             var intervals = StepTimelineBuilder.Build(
@@ -59,7 +61,7 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
 
             // 音声なし録画（契約 §7 では正当）は Title / Ending と concat するとストリーム構成が
             // 不一致になり壊れ得るため、無音声トラックを補う（監査 m-4 対応）
-            var hasAudio = ProbeHasAudioStream(request.RecordingPath);
+            var hasAudio = await ProbeHasAudioStreamAsync(request.RecordingPath, cancellationToken).ConfigureAwait(false);
             var (audioInput, audioOutput) = AudioStreamArgs.Build(hasAudio);
 
             var main = Path.Combine(workDir, "main.mp4");
@@ -68,12 +70,12 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
                 workDir,
                 new RunProgressContext(VideoCompositionStage.BurningSubtitles, "Step 字幕を焼き込んでいます…", BaseProgress.BurningSubtitles, BaseProgress.RenderingTitle - BaseProgress.BurningSubtitles, sourceSeconds),
                 options,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
             // ---- 2. Title Screen / Ending（開発計画書 §20）----
             var titleText = string.IsNullOrWhiteSpace(options.TitleText) ? request.Project.Title : options.TitleText;
-            var title = await RenderCardAsync(titleText, options.TitleSeconds, w, h, fps, options, workDir, "title", cancellationToken);
-            var ending = await RenderCardAsync(options.EndingText, options.EndingSeconds, w, h, fps, options, workDir, "ending", cancellationToken);
+            var title = await RenderCardAsync(titleText, options.TitleSeconds, w, h, fps, options, workDir, "title", cancellationToken).ConfigureAwait(false);
+            var ending = await RenderCardAsync(options.EndingText, options.EndingSeconds, w, h, fps, options, workDir, "ending", cancellationToken).ConfigureAwait(false);
 
             // ---- 3. 結合（録画側の音声パラメータに合わせて再エンコードして繋ぐ。copy は音声仕様不一致で壊れ得る）----
             var listPath = Path.Combine(workDir, "concat.txt");
@@ -84,10 +86,10 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
                 workDir,
                 new RunProgressContext(VideoCompositionStage.Concatenating, "動画を結合しています…", BaseProgress.Concatenating, BaseProgress.Finalizing - BaseProgress.Concatenating, sourceSeconds + options.TitleSeconds + options.EndingSeconds),
                 options,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
             Report(options, VideoCompositionStage.Finalizing, "出力を確認しています…", BaseProgress.Finalizing);
-            var duration = ProbeDurationSeconds(request.OutputPath);
+            var duration = await ProbeDurationSecondsAsync(request.OutputPath, cancellationToken).ConfigureAwait(false);
             Report(options, VideoCompositionStage.Finalizing, "完了", 1.0);
             return new VideoCompositionResult(request.OutputPath, duration);
         }
@@ -118,58 +120,63 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
             workDir,
             new RunProgressContext(stage, detail, baseProgress, weight, seconds),
             options,
-            ct);
+            ct).ConfigureAwait(false);
         return output;
     }
 
     /// <summary>ffprobe で入力の解像度・fps を取得する（Title/Ending を録画に合わせるため）。</summary>
-    private (int Width, int Height, string Fps) ProbeVideoInfo(string path)
+    private async Task<(int Width, int Height, string Fps)> ProbeVideoInfoAsync(string path, CancellationToken ct)
     {
         var ffprobe = Path.Combine(Path.GetDirectoryName(_ffmpegPath)!, "ffprobe.exe");
-        var width = Probe(ffprobe, $"-v error -select_streams v:0 -show_entries stream=width -of csv=p=0 \"{path}\"");
-        var height = Probe(ffprobe, $"-v error -select_streams v:0 -show_entries stream=height -of csv=p=0 \"{path}\"");
-        var rate = Probe(ffprobe, $"-v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 \"{path}\"");
+        var width = await ProbeAsync(ffprobe, $"-v error -select_streams v:0 -show_entries stream=width -of csv=p=0 \"{path}\"", ct).ConfigureAwait(false);
+        var height = await ProbeAsync(ffprobe, $"-v error -select_streams v:0 -show_entries stream=height -of csv=p=0 \"{path}\"", ct).ConfigureAwait(false);
+        var rate = await ProbeAsync(ffprobe, $"-v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 \"{path}\"", ct).ConfigureAwait(false);
         return (int.Parse(width), int.Parse(height), rate.Contains('/') ? rate : $"{rate}/1");
-
-        static string Probe(string ffprobe, string args)
-        {
-            var psi = new ProcessStartInfo(ffprobe, args) { RedirectStandardOutput = true, UseShellExecute = false };
-            using var p = Process.Start(psi)!;
-            var text = p.StandardOutput.ReadToEnd().Trim();
-            p.WaitForExit();
-            return text;
-        }
     }
 
     /// <summary>ffprobe で入力に音声ストリームがあるかを確認する（m-4: 音声なし録画の guard）。</summary>
-    private bool ProbeHasAudioStream(string path)
+    private async Task<bool> ProbeHasAudioStreamAsync(string path, CancellationToken ct)
     {
         var ffprobe = Path.Combine(Path.GetDirectoryName(_ffmpegPath)!, "ffprobe.exe");
-        var psi = new ProcessStartInfo(
-            ffprobe, $"-v error -select_streams a -show_entries stream=index -of csv=p=0 \"{path}\"")
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-        };
-        using var p = Process.Start(psi)!;
-        var text = p.StandardOutput.ReadToEnd().Trim();
-        p.WaitForExit();
+        var text = await ProbeAsync(
+            ffprobe, $"-v error -select_streams a -show_entries stream=index -of csv=p=0 \"{path}\"", ct).ConfigureAwait(false);
         return text.Length > 0;
     }
 
-    private double ProbeDurationSeconds(string path)
+    private async Task<double> ProbeDurationSecondsAsync(string path, CancellationToken ct)
     {
         var ffprobe = Path.Combine(Path.GetDirectoryName(_ffmpegPath)!, "ffprobe.exe");
-        var psi = new ProcessStartInfo(
-            ffprobe, $"-v error -show_entries format=duration -of csv=p=0 \"{path}\"")
+        var text = await ProbeAsync(ffprobe, $"-v error -show_entries format=duration -of csv=p=0 \"{path}\"", ct).ConfigureAwait(false);
+        return double.Parse(text);
+    }
+
+    /// <summary>
+    /// ffprobe を非同期実行して stdout を取得する。
+    /// 同期の ReadToEnd/WaitForExit だと UI thread を block し（D 側実機で約 30 秒の freeze）、
+    /// CancellationToken も効かないため、RunAsync(ffmpeg) と同じ cancellation policy を使う:
+    /// 非同期読み取り + WaitForExitAsync(ct)、cancel 時は ffprobe をプロセスツリーごと kill する。
+    /// </summary>
+    private static async Task<string> ProbeAsync(string ffprobe, string arguments, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(ffprobe, arguments)
         {
             RedirectStandardOutput = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         using var p = Process.Start(psi)!;
-        var text = p.StandardOutput.ReadToEnd().Trim();
-        p.WaitForExit();
-        return double.Parse(text);
+        var readTask = p.StandardOutput.ReadToEndAsync();
+        try
+        {
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+            return (await readTask.ConfigureAwait(false)).Trim();
+        }
+        catch (OperationCanceledException)
+        {
+            // キャンセル時は ffprobe を残さず終了させる（ゾンビプロセスが入力ファイルを掴み続けるのを防ぐ）
+            try { p.Kill(entireProcessTree: true); } catch { /* 既に終了している場合 */ }
+            throw;
+        }
     }
 
     /// <summary>ffmpeg 実行 1 回分の進捗定義（段階の全体進捗での位置とウェイト・想定処理秒）。</summary>
@@ -230,8 +237,8 @@ public sealed class FfmpegVideoRenderer : IVideoComposer
 
         try
         {
-            await p.WaitForExitAsync(ct);
-            await readTask;
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+            await readTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
