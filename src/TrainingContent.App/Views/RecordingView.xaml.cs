@@ -357,9 +357,30 @@ public partial class RecordingView : UserControl
                 break;
 
             case RecordingStopStatus.EventCaptureFailed:
-                // 操作記録が壊れた recording は保存しない（MP4 等の artifact は残す）。
+                // 操作記録が壊れた recording は保存しない（canonical は変更せず、staging は Abort する）。
                 ShowMessage(outcome.ErrorMessage ?? EventCaptureFailedFallback);
                 SetStatus("録画は保存されませんでした。");
+                break;
+
+            case RecordingStopStatus.StepBuildFailed:
+                ShowMessage(outcome.ErrorMessage ?? "操作記録から手順を生成できませんでした。");
+                SetStatus("録画は保存されませんでした。");
+                break;
+
+            case RecordingStopStatus.SourceChanged:
+                ShowMessage(outcome.ErrorMessage ?? "録画中にプロジェクトが更新されました。");
+                SetStatus("録画は保存されませんでした。");
+                break;
+
+            case RecordingStopStatus.FinalizationFailed:
+                ShowMessage(outcome.ErrorMessage ?? "録画の確定に失敗しました。");
+                SetStatus("録画結果の確定に失敗しました。");
+                break;
+
+            case RecordingStopStatus.RecoveryRequired:
+                // raw path / exception message は表示しない（復旧用データは保持されている）。
+                ShowMessage(outcome.ErrorMessage ?? "録画の確定に失敗し、復旧用データを保持しています。");
+                SetStatus("録画結果の確定に失敗しました。");
                 break;
 
             default:

@@ -31,7 +31,14 @@ public partial class App : Application
         // 録画 Engine は App lifetime で 1 instance だけ生成する（IDisposable の所有はこの Root）。
         // App から ScreenRecorderLib を参照しない。境界は IRecordingEngine のみ。
         _recordingEngine = new ScreenRecorderRecordingEngine();
-        var recordingCoordinator = new RecordingCoordinator(_recordingEngine, projectStore, currentProject);
+
+        // Recording finalization の commit boundary。Engine の MP4 確定と project.json 保存を
+        // 1 logical transaction にする（View / Coordinator が new しない）。
+        var recordingFinalizationTransaction =
+            new RecordingFinalizationTransaction(_recordingEngine, projectStore);
+
+        var recordingCoordinator = new RecordingCoordinator(
+            _recordingEngine, projectStore, currentProject, recordingFinalizationTransaction);
 
         // Video 生成 backend。transaction（staging / backup）は Storage 側が所有する。
         var videoTransaction = new VideoArtifactTransaction(projectStore);

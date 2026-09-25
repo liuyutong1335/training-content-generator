@@ -1,4 +1,8 @@
-﻿using System.Diagnostics;
+﻿// UseWPF=true の project では implicit usings が WPF 用になり System.IO が含まれない。
+// また System.Windows.Shapes.Path との衝突を避けるため Path を明示的に alias する。
+using System.Diagnostics;
+using System.IO;
+using Path = System.IO.Path;
 using TrainingContent.App.State;
 using TrainingContent.Capture;
 using TrainingContent.Core.Models;
@@ -22,9 +26,12 @@ namespace TrainingContent.App.Services;
 /// 固定 ms の補正や <c>RebaseClockToNow()</c> は使わない。
 /// </para>
 /// <para>
-/// 意図的にやらないこと: ScreenRecorderLib の直接操作、timeline の数値補正、Step 生成、AI、
-/// EventCapture の再実装。EventCapture が壊れた recording は integrated recording として
-/// project.json に確定しない（recovery は D8）。
+/// 意図的にやらないこと: ScreenRecorderLib の直接操作、timeline の数値補正、Step 生成そのもの、AI、
+/// EventCapture の再実装。finalization の判定（current session events の抽出 / StepBuilder /
+/// candidate / validation / transaction / CurrentProject swap）は
+/// <see cref="RecordingFinalizationPipeline"/> に置き、ここは Engine / EventCapture の呼出順序と
+/// session state に専念する。EventCapture が壊れた recording は integrated recording として
+/// project.json に確定しない。
 /// </para>
 /// </summary>
 public sealed class RecordingCoordinator
@@ -50,9 +57,23 @@ public sealed class RecordingCoordinator
     private readonly IRecordingEngine _engine;
     private readonly ProjectStore _projectStore;
     private readonly CurrentProjectContext _currentProject;
+    private readonly RecordingFinalizationPipeline _finalizationPipeline;
 
     private Guid? _sessionProjectId;
     private RecordingOptions? _sessionOptions;
+
+    /// <summary>
+    /// 録画開始時点の <c>project.Revision</c>（candidate の base）。UI thread だけが読み書きする。
+    /// </summary>
+    private int _sessionBaseRevision;
+
+    /// <summary>
+    /// session 開始直前の events.jsonl byte length（= 今回 session が append した範囲の開始位置）。
+    /// Engine callback thread（<see cref="OnCaptureStarted"/>）が書き、UI thread（<see cref="StopAsync"/>）が
+    /// 読むため Volatile で扱う。未取得は <see cref="RecordingSessionEventsReader.NoOffset"/>。
+    /// </summary>
+    private long _sessionEventsStartOffset = RecordingSessionEventsReader.NoOffset;
+
     private bool _isCommandRunning;
 
     /// <summary>
@@ -89,15 +110,22 @@ public sealed class RecordingCoordinator
     public RecordingCoordinator(
         IRecordingEngine engine,
         ProjectStore projectStore,
-        CurrentProjectContext currentProject)
+        CurrentProjectContext currentProject,
+        RecordingFinalizationTransaction finalizationTransaction)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(currentProject);
+        ArgumentNullException.ThrowIfNull(finalizationTransaction);
 
         _engine = engine;
         _projectStore = projectStore;
         _currentProject = currentProject;
+
+        // finalization の判定は pipeline が持ち、transaction はその唯一の commit boundary。
+        // pipeline は context-free（CurrentProject へは触れない）。publish は UI-affine なこの class が行う。
+        _finalizationPipeline = new RecordingFinalizationPipeline(
+            engine, projectStore, finalizationTransaction);
 
         // Engine の StateChanged / CaptureStarted は UI thread から来る保証がない。ここでは中継するだけにして、
         // Dispatcher への marshal は UI 側（RecordingView / MainWindow）の責任にする。
@@ -190,6 +218,13 @@ public sealed class RecordingCoordinator
 
         try
         {
+            // current session の events 範囲を固定する。EventTimelineWriter は Start 時に既存末尾へ
+            // newline を補うことがあるため、必ず session.Start() の前に byte length を取る。
+            var eventsPath = Path.Combine(session.ProjectDirectory, ProjectStore.EventsFileName);
+            Volatile.Write(
+                ref _sessionEventsStartOffset,
+                RecordingSessionEventsReader.SnapshotStartOffset(eventsPath));
+
             session.Start();
 
             // Start() の間に ownership が cleanup 側へ移っていたら ready に戻さない
@@ -205,6 +240,8 @@ public sealed class RecordingCoordinator
         }
         catch (Exception ex)
         {
+            // events offset の取得または session.Start() の失敗。current session の Step build boundary が
+            // 保証できないため integrated recording として続行しない（events.jsonl は truncate しない）。
             Trace.TraceError("RecordingCoordinator: 操作記録の開始に失敗しました — {0}", ex);
             MarkEventCaptureFaulted();
         }
@@ -249,6 +286,11 @@ public sealed class RecordingCoordinator
             var options = new RecordingOptions
             {
                 OutputFilePath = _projectStore.GetRecordingOutputPath(project.Id),
+
+                // MP4 の canonical 置換を Engine の StopAsync 内で行わせず、finalization transaction の
+                // commit 点に委ねる（StepBuilder / project.json 保存と同じ logical transaction にする）。
+                DeferredCommit = true,
+
                 Display = display,
                 SystemAudioDevice = systemAudioDevice,
                 MicrophoneDevice = microphoneDevice,
@@ -256,6 +298,8 @@ public sealed class RecordingCoordinator
 
             _sessionProjectId = project.Id;
             _sessionOptions = options;
+            _sessionBaseRevision = project.Revision;
+            Volatile.Write(ref _sessionEventsStartOffset, RecordingSessionEventsReader.NoOffset); // CaptureStarted で確定する
             _captureReady = false;
             _eventCaptureFaulted = false;
             _eventCaptureFaultMessage = null;
@@ -376,17 +420,20 @@ public sealed class RecordingCoordinator
     // ---------------------------------------------------------------------
 
     /// <summary>
-    /// 録画を停止する。順序は integration-smoke と同じ:
-    /// Engine 停止（MP4 確定）→ EventCapture 停止 → Dispose → 論理時間の比較 → project.json 保存。
+    /// 録画を停止する。順序: Engine 停止（DeferredCommit = staging のまま）→ EventCapture 停止 → Dispose →
+    /// 論理時間の比較 → <see cref="RecordingFinalizationPipeline"/> による finalization
+    /// （current session events の抽出 → StepBuilder → candidate → validation → transaction →
+    /// CurrentProject swap）。
     ///
     /// <para>
-    /// 保存は session 固定の Project ID で project.json を読み直してから行う
-    /// （UI が保持している古い object をそのまま書き戻さない）。
-    /// Revision / UpdatedAtUtc を進めるのはこの 1 箇所だけ。
+    /// Engine の MP4 確定と project.json 保存は finalization transaction の 1 logical transaction として
+    /// 行われる（片方だけが確定した状態を作らない）。保存は session 固定の Project ID で project.json を
+    /// 読み直してから行う（UI が保持している古い object をそのまま書き戻さない）。
     /// </para>
     /// <para>
     /// EventCapture が失敗した recording は integrated recording として確定しない
-    /// （RecordingInfo を保存せず、Revision も進めない）。MP4 / events.jsonl / screenshot は削除しない。
+    /// （RecordingInfo を保存せず、Revision も進めない）。確定待ち録画（staging）は Abort するが、
+    /// canonical と events.jsonl / screenshot は削除しない。
     /// </para>
     /// </summary>
     public async Task<RecordingStopOutcome> StopAsync()
@@ -471,65 +518,36 @@ public sealed class RecordingCoordinator
             var projectId = _sessionProjectId;
             var options = _sessionOptions;
 
-            if (_eventCaptureFaulted)
-            {
-                // 操作記録が壊れている recording は integrated recording として保存しない。
-                return RecordingStopOutcome.Failure(
-                    RecordingStopStatus.EventCaptureFailed,
-                    _eventCaptureFaultMessage ?? EventCaptureFaultedUserMessage,
-                    result.FilePath);
-            }
-
             if (projectId is null || options is null)
             {
+                // session 情報が失われている = finalization の入力が揃わない。確定待ち録画が残っていれば
+                // 解消しておく（放置すると次回 StartAsync が拒否される）。
                 Trace.TraceError("RecordingCoordinator: session 情報が失われているため保存できません。");
+                _finalizationPipeline.AbortPendingBestEffort(result, "session metadata lost");
                 return RecordingStopOutcome.Failure(
                     RecordingStopStatus.SaveFailed,
                     SaveFailedMessage,
                     result.FilePath);
             }
 
-            try
-            {
-                var project = await _projectStore.LoadProjectAsync(projectId.Value).ConfigureAwait(true);
-                if (project is null)
-                {
-                    Trace.TraceError("RecordingCoordinator: Project が見つかりません — {0}", projectId.Value);
-                    return RecordingStopOutcome.Failure(
-                        RecordingStopStatus.SaveFailed,
-                        SaveFailedMessage,
-                        result.FilePath);
-                }
+            // EventCapture fault の判定 / Revision gate / current session events の抽出 / StepBuilder /
+            // candidate 構築 / validation / finalization transaction は pipeline が持つ（context-free）。
+            var finalization = await _finalizationPipeline
+                .FinalizeAsync(new RecordingFinalizationInput(
+                    projectId.Value,
+                    options,
+                    result,
+                    Volatile.Read(ref _sessionEventsStartOffset),
+                    _sessionBaseRevision,
+                    _eventCaptureFaulted,
+                    _eventCaptureFaultMessage))
+                .ConfigureAwait(true); // publish を UI thread で行うため、ここで UI context へ戻す
 
-                project.Recording = MapToRecordingInfo(result, options);
-                project.Revision++;
-                project.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            // CurrentProject への publish は UI-affine なこの層で行う。pipeline 側（thread pool の
+            // 可能性がある継続）から SetCurrent を呼ぶと cross-thread 例外でプロセスが落ちる。
+            PublishFinalizedProject(_currentProject, projectId.Value, finalization);
 
-                await _projectStore.SaveProjectAsync(project).ConfigureAwait(true);
-
-                // 保存中に別 Project が Current になっていた場合、保存済みの録画対象へ
-                // Current Project を巻き戻さない（ProjectWorkspace と同じ guard 形式）。
-                // 保存自体は既に成功しているため、ここで触るのは UI の Current Project だけ。
-                if (_currentProject.IsCurrent(projectId.Value))
-                {
-                    _currentProject.SetCurrent(project);
-                }
-
-                Trace.TraceInformation(
-                    "RecordingCoordinator: integrated recording を保存しました（Engine {0:F0} ms / Event {1} ms）。",
-                    result.Duration.TotalMilliseconds,
-                    eventDurationMs?.ToString() ?? "n/a");
-
-                return RecordingStopOutcome.Success(result.FilePath);
-            }
-            catch (Exception ex)
-            {
-                Trace.TraceError("RecordingCoordinator: 録画結果の保存に失敗しました — {0}", ex);
-                return RecordingStopOutcome.Failure(
-                    RecordingStopStatus.SaveFailed,
-                    SaveFailedMessage,
-                    result.FilePath);
-            }
+            return finalization.Outcome;
         }
         finally
         {
@@ -683,6 +701,8 @@ public sealed class RecordingCoordinator
     {
         _sessionProjectId = null;
         _sessionOptions = null;
+        _sessionBaseRevision = 0;
+        Volatile.Write(ref _sessionEventsStartOffset, RecordingSessionEventsReader.NoOffset);
         _captureReady = false;
         _eventCaptureFaulted = false;
         _eventCaptureFaultMessage = null;
@@ -691,6 +711,43 @@ public sealed class RecordingCoordinator
     // ---------------------------------------------------------------------
     // Mapping（純関数 — UI / IO に依存しない）
     // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// finalization の結果を CurrentProject へ publish する（identity guard 付き）。
+    ///
+    /// <para>
+    /// <b>必ず UI thread から呼ぶこと</b>: <see cref="CurrentProjectContext.SetCurrent"/> は
+    /// CurrentProjectChanged を同期発火し、購読している View（HomeView / ReviewView 等）が
+    /// WPF オブジェクトへ触る。非 UI thread から呼ぶと cross-thread InvalidOperationException で
+    /// プロセスが落ちる（2026-09-25 の runtime smoke で検出した regression の再発防止。
+    /// <see cref="RecordingFinalizationPipeline"/> は意図的に context-free にしてあるため、
+    /// publish はこの UI-affine な層が唯一の境界になる）。
+    /// </para>
+    /// <para>
+    /// 成功（<see cref="RecordingStopStatus.Saved"/> かつ committed Project あり）で、かつ録画対象が
+    /// current のときだけ差し替える。別 Project が current なら巻き戻さない（既存 identity guard）。
+    /// </para>
+    /// </summary>
+    public static void PublishFinalizedProject(
+        CurrentProjectContext currentProject,
+        Guid projectId,
+        RecordingFinalizationPipelineResult finalization)
+    {
+        ArgumentNullException.ThrowIfNull(currentProject);
+        ArgumentNullException.ThrowIfNull(finalization);
+
+        if (finalization.Status != RecordingStopStatus.Saved || finalization.CommittedProject is null)
+        {
+            return;
+        }
+
+        if (!currentProject.IsCurrent(projectId))
+        {
+            return;
+        }
+
+        currentProject.SetCurrent(finalization.CommittedProject);
+    }
 
     /// <summary>
     /// <see cref="RecordingResult"/> と録画時に渡した <see cref="RecordingOptions"/> から
@@ -746,9 +803,29 @@ public enum RecordingStopStatus
 
     /// <summary>
     /// EventCapture 側が失敗したため integrated recording として保存しなかった。
-    /// MP4 / events.jsonl / screenshot は残す（recovery は D8）。
+    /// 確定待ち録画（staging）は Abort し、canonical は変更しない。events.jsonl / screenshot は残す。
     /// </summary>
     EventCaptureFailed,
+
+    /// <summary>
+    /// current session の操作記録から Step を生成できなかった（events 読み出し失敗 / StepBuilder error）。
+    /// </summary>
+    StepBuildFailed,
+
+    /// <summary>録画中に Project が更新されたため、古い base からの確定を行わなかった。</summary>
+    SourceChanged,
+
+    /// <summary>
+    /// 確定処理に失敗した（candidate validation / transaction）。canonical と project.json は
+    /// transaction 前の状態へ戻っている（またはそもそも変更されていない）。
+    /// </summary>
+    FinalizationFailed,
+
+    /// <summary>
+    /// 確定に失敗し、rollback も失敗したため復旧用 backup を保持している。
+    /// ユーザーへは generic な message のみを出し、filesystem path は表示しない。
+    /// </summary>
+    RecoveryRequired,
 
     /// <summary>そもそも録画中ではなかった。</summary>
     NotRecording,
