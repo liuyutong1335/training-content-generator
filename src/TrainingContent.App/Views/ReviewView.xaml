@@ -240,6 +240,12 @@
                                     Width="96" Height="28"
                                     Margin="6,0,0,0"
                                     Click="ClearSelection_Click" />
+                            <Button x:Name="ReplaceScreenshotButton"
+                                    Content="画像を追加"
+                                    Width="120" Height="28"
+                                    Margin="6,0,0,0"
+                                    ToolTip="画像ファイル（png / jpg / jpeg / bmp）を教材用 screenshot として取り込みます"
+                                    Click="ReplaceScreenshot_Click" />
                             <TextBlock x:Name="ScreenshotStatusText"
                                        Margin="10,0,0,0"
                                        VerticalAlignment="Center"

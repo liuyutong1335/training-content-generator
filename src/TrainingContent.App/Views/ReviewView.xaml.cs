@@ -57,6 +57,7 @@ public partial class ReviewView : UserControl
     private readonly CurrentProjectContext _currentProject;
     private readonly ProjectWorkspace _workspace;
     private readonly ScreenshotRedactionCoordinator _screenshotRedaction;
+    private readonly ScreenshotReplacementCoordinator _screenshotReplacement;
 
     private ReviewDraft? _draft;
     private Guid? _draftProjectId;
@@ -79,17 +80,20 @@ public partial class ReviewView : UserControl
     public ReviewView(
         CurrentProjectContext currentProject,
         ProjectWorkspace workspace,
-        ScreenshotRedactionCoordinator screenshotRedaction)
+        ScreenshotRedactionCoordinator screenshotRedaction,
+        ScreenshotReplacementCoordinator screenshotReplacement)
     {
         ArgumentNullException.ThrowIfNull(currentProject);
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(screenshotRedaction);
+        ArgumentNullException.ThrowIfNull(screenshotReplacement);
 
         InitializeComponent();
 
         _currentProject = currentProject;
         _workspace = workspace;
         _screenshotRedaction = screenshotRedaction;
+        _screenshotReplacement = screenshotReplacement;
 
         _currentProject.CurrentProjectChanged += OnCurrentProjectChanged;
 
@@ -313,6 +317,96 @@ public partial class ReviewView : UserControl
         SelectionOverlay.IsEnabled = canSelect;
         RedactButton.IsEnabled = canSelect && _selection is not null;
         ClearSelectionButton.IsEnabled = canSelect && _selection is not null;
+
+        // import / replacement（B3）の可否と label は pure helper が持つ。
+        var decision = ResolveScreenshotReplacementDecision();
+        ReplaceScreenshotButton.IsEnabled = decision.CanReplace;
+        ReplaceScreenshotButton.Content = decision.ButtonLabel;
+    }
+
+    // ---------------------------------------------------------------------
+    // Screenshot import / replacement（B3）
+    // ---------------------------------------------------------------------
+
+    private ScreenshotReplacementDecision ResolveScreenshotReplacementDecision()
+    {
+        var step = StepListBox.SelectedItem as ReviewDraftStep;
+
+        return ScreenshotReplacementPolicy.Resolve(
+            hasSelectedStep: step is not null,
+            isDirty: HasUnsavedChanges,
+            isMutatingCanonical: _isMutatingCanonical,
+            currentScreenshotPath: step?.ScreenshotPath);
+    }
+
+    /// <summary>
+    /// 外部画像を教材用 screenshot として取り込み、選択中 Step の ScreenshotPath を差し替える。
+    ///
+    /// <para>
+    /// 旧 file（original / edited いずれでも）は削除しない。成功時は fresh な
+    /// <c>screenshots/edited/step-…png</c> へ ScreenshotPath を更新するだけ。
+    /// </para>
+    /// </summary>
+    private async void ReplaceScreenshot_Click(object sender, RoutedEventArgs e)
+    {
+        var step = StepListBox.SelectedItem as ReviewDraftStep;
+        var projectId = _draftProjectId;
+
+        var decision = ResolveScreenshotReplacementDecision();
+        if (!decision.CanReplace || step is null || projectId is null)
+        {
+            if (decision.Guidance is { } guidance)
+            {
+                SetScreenshotStatus(guidance);
+            }
+
+            return;
+        }
+
+        // File dialog の表示中は canonical mutation flag を立てない（まだ何も変更していない）。
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "スクリーンショットの画像を選択",
+            Filter = "画像ファイル (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+        {
+            return; // Cancel
+        }
+
+        var currentScreenshotPath = step.ScreenshotPath;
+        var isImport = string.IsNullOrWhiteSpace(currentScreenshotPath);
+
+        _isMutatingCanonical = true;
+        SetScreenshotStatus("画像を取り込んでいます…");
+        UpdateCommandStates();
+
+        try
+        {
+            var outcome = await _screenshotReplacement.ReplaceAsync(
+                projectId.Value, step.StepId, currentScreenshotPath, dialog.FileName);
+
+            SetScreenshotStatus(outcome.Message);
+
+            if (outcome.Succeeded)
+            {
+                // canonical が更新されているので draft を作り直す（preview も新 path で再読込され、選択は clear される）。
+                RebuildAndRender(preserveSelection: true);
+                SetStatus(isImport ? "スクリーンショットを追加しました。" : "スクリーンショットを差し替えました。");
+            }
+            else
+            {
+                StatusChanged?.Invoke(this, outcome.Message);
+            }
+        }
+        finally
+        {
+            _isMutatingCanonical = false;
+            UpdateCommandStates();
+        }
     }
 
     // ---------------------------------------------------------------------

@@ -62,6 +62,10 @@ public partial class App : Application
 
         // Manual 生成 backend。Manual Core は file I/O も Outputs 更新も行わない契約のため、
         // persistence（staging / backup / pair 置換）は Storage 側の transaction が所有する。
+        // screenshot import / replacement（B3）。original は EventCapture 専用のため、
+        // user が持ち込む画像はすべて screenshots/edited へ fresh 名で新規作成する。
+        var screenshotReplacement = new ScreenshotReplacementCoordinator(projectStore, workspace);
+
         var manualTransaction = new ManualArtifactTransaction(projectStore);
         var manualGenerationCoordinator = new ManualGenerationCoordinator(
             projectStore,
@@ -76,6 +80,7 @@ public partial class App : Application
             recordingCoordinator,
             videoGenerationCoordinator,
             screenshotRedaction,
+            screenshotReplacement,
             manualGenerationCoordinator);
         MainWindow = window;
         window.Show();

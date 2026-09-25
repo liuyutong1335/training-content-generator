@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         RecordingCoordinator recordingCoordinator,
         VideoGenerationCoordinator videoGenerationCoordinator,
         ScreenshotRedactionCoordinator screenshotRedaction,
+        ScreenshotReplacementCoordinator screenshotReplacement,
         ManualGenerationCoordinator manualGeneration)
     {
         ArgumentNullException.ThrowIfNull(projectStore);
@@ -46,6 +47,7 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(recordingCoordinator);
         ArgumentNullException.ThrowIfNull(videoGenerationCoordinator);
         ArgumentNullException.ThrowIfNull(screenshotRedaction);
+        ArgumentNullException.ThrowIfNull(screenshotReplacement);
         ArgumentNullException.ThrowIfNull(manualGeneration);
 
         InitializeComponent();
@@ -63,7 +65,7 @@ public partial class MainWindow : Window
 
         // Review は Current Project の Steps を編集し（B1）、Screenshot の BlackBox redaction（C）を行う。
         // editable control は detached draft にだけ bind し、保存 / redaction は Services 経由でのみ行う。
-        _reviewView = new ReviewView(currentProject, workspace, screenshotRedaction);
+        _reviewView = new ReviewView(currentProject, workspace, screenshotRedaction, screenshotReplacement);
         _reviewView.StatusChanged += OnStatusChanged;
 
         _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator, manualGeneration);
