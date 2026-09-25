@@ -7,6 +7,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- ===== Header ===== -->
@@ -115,8 +116,42 @@
                        Visibility="Collapsed" />
         </Grid>
 
+        <!-- ===== Video generation progress（生成中のみ表示） ===== -->
+        <Grid x:Name="GenerationPanel"
+              Grid.Row="3"
+              Margin="0,16,0,0"
+              Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Button x:Name="CancelGenerateButton"
+                    Grid.Column="0"
+                    Content="キャンセル"
+                    Width="104" Height="30"
+                    VerticalAlignment="Center"
+                    Click="CancelGenerate_Click" />
+
+            <StackPanel Grid.Column="1"
+                        Margin="12,0,0,0"
+                        VerticalAlignment="Center">
+                <TextBlock x:Name="VideoProgressText"
+                           Text="動画を生成しています…"
+                           FontSize="12"
+                           Foreground="#FF555555"
+                           TextTrimming="CharacterEllipsis" />
+                <ProgressBar x:Name="VideoProgressBar"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Height="8"
+                             Margin="0,6,0,0" />
+            </StackPanel>
+        </Grid>
+
         <!-- ===== Actions ===== -->
-        <StackPanel Grid.Row="3"
+        <StackPanel Grid.Row="4"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     Margin="0,16,0,0">

@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using TrainingContent.App.Services;
 using TrainingContent.Storage;
+using TrainingContent.Video;
 
 namespace TrainingContent.App.Views;
 
@@ -30,6 +31,11 @@ public partial class ContentsView : UserControl
         Ready,
     }
 
+    /// <summary>生成開始直後の初期表示（Video Core の最初の report が届く前）。</summary>
+    private const string GeneratingText = "動画を生成しています…";
+
+    private const string CancelRequestedText = "キャンセルしています…";
+
     private readonly ProjectStore _projectStore;
     private readonly ProjectWorkspace _workspace;
     private readonly VideoGenerationCoordinator _videoGeneration;
@@ -37,13 +43,25 @@ public partial class ContentsView : UserControl
 
     private bool _isLoading;
     private bool _isGenerating;
+    private bool _isCancelRequested;
     private bool _hasLoaded;
+
+    /// <summary>
+    /// 実行中の video 生成 session の CTS。<b>1 generation = 1 CTS</b> で、完了時に必ず Dispose して null に戻す。
+    /// </summary>
+    private CancellationTokenSource? _videoGenerationCts;
 
     /// <summary>Status Bar 表示用の単純な通知。</summary>
     public event EventHandler<string>? StatusChanged;
 
     /// <summary>Project を作成・オープンし、Home 表示へ切り替えるべきとき。</summary>
     public event EventHandler<string>? ProjectActivated;
+
+    /// <summary>video 生成の開始 / 終了で発火する（UI thread）。Shell navigation lock の更新に使う。</summary>
+    public event EventHandler? GenerationActivityChanged;
+
+    /// <summary>video 生成中かどうか。Shell の navigation lock 判定に使う。</summary>
+    public bool IsGenerating => _isGenerating;
 
     public ContentsView(
         ProjectStore projectStore,
@@ -260,27 +278,29 @@ public partial class ContentsView : UserControl
     {
         var selected = ProjectGrid.SelectedItem as ProjectSummary;
         var hasSelection = selected is not null;
-        var idle = !_isLoading && !_isGenerating;
+        var state = ContentsGenerationUiStateResolver.Resolve(_isLoading, _isGenerating, _isCancelRequested);
 
-        RefreshButton.IsEnabled = idle;
-        NewProjectButton.IsEnabled = idle;
-        EmptyNewProjectButton.IsEnabled = idle;
-        OpenButton.IsEnabled = idle && hasSelection;
-        RenameButton.IsEnabled = idle && hasSelection;
-        DeleteButton.IsEnabled = idle && hasSelection;
-
-        // 生成中は一覧そのものを止める（selection 変更・行ダブルクリックも含めて）。
-        ProjectGrid.IsEnabled = !_isGenerating;
+        RefreshButton.IsEnabled = state.IsContentMutationEnabled;
+        NewProjectButton.IsEnabled = state.IsContentMutationEnabled;
+        EmptyNewProjectButton.IsEnabled = state.IsContentMutationEnabled;
+        OpenButton.IsEnabled = state.IsContentMutationEnabled && hasSelection;
+        RenameButton.IsEnabled = state.IsContentMutationEnabled && hasSelection;
+        DeleteButton.IsEnabled = state.IsContentMutationEnabled && hasSelection;
+        ProjectGrid.IsEnabled = state.IsGridEnabled;
 
         // ここは convenience の事前確認。最終的な precondition は VideoGenerationCoordinator が authority。
-        GenerateButton.IsEnabled =
-            idle && selected is { StepCount: > 0, DurationMs: not null };
+        GenerateButton.IsEnabled = state.IsGenerateEnabled(
+            selected is { StepCount: > 0, DurationMs: not null });
         // 未選択時に「再生成」と出さない（selected が null のとき ?. 比較は false に落ちる）。
         GenerateButton.Content = _isGenerating
             ? "生成中..."
             : selected is null || selected.VideoStatus == ArtifactGenerationState.Missing
                 ? "動画を生成"
                 : "動画を再生成";
+
+        GenerationPanel.Visibility = state.IsProgressVisible ? Visibility.Visible : Visibility.Collapsed;
+        CancelGenerateButton.Visibility = state.IsCancelVisible ? Visibility.Visible : Visibility.Collapsed;
+        CancelGenerateButton.IsEnabled = state.IsCancelEnabled;
     }
 
     // ---------------------------------------------------------------------
@@ -297,15 +317,26 @@ public partial class ContentsView : UserControl
         // 対象 Project を capture する。生成中に selection が動いても追従しない。
         var projectId = selected.Id;
 
+        // 1 generation = 1 CTS。generation 中に 2 つ目の生成は開始させない（_isGenerating guard）。
+        var cts = new CancellationTokenSource();
+        _videoGenerationCts = cts;
         _isGenerating = true;
+        _isCancelRequested = false;
+
+        ResetProgress();
         UpdateButtons();
         SetStatus("動画を生成しています...");
+        GenerationActivityChanged?.Invoke(this, EventArgs.Empty);
+
+        // Progress<T> は生成元（UI thread）の SynchronizationContext を捕捉するので、Report は UI thread へ戻る。
+        var progress = new Progress<VideoCompositionProgress>(OnCompositionProgress);
 
         try
         {
-            var result = await _videoGeneration.GenerateAsync(projectId);
+            var result = await _videoGeneration.GenerateAsync(projectId, progress, cts.Token);
 
             // 一覧を作り直して VideoStatus を更新する（selection は LoadAsync が復元する）。
+            // cancel は artifact も metadata も変えていないので再読込しない。
             if (result.Status is VideoGenerationStatus.Generated
                 or VideoGenerationStatus.ProjectNotFound
                 or VideoGenerationStatus.SourceChanged)
@@ -317,11 +348,75 @@ public partial class ContentsView : UserControl
         }
         finally
         {
-            // generation failure でも permanent busy にしない。
+            // cancel 要求で解除せず、GenerateAsync が戻ってから解除する。
             _isGenerating = false;
+            _isCancelRequested = false;
+            if (ReferenceEquals(_videoGenerationCts, cts))
+            {
+                _videoGenerationCts = null;
+            }
+
+            cts.Dispose();
+
+            // generation failure / cancel でも permanent busy にしない。
+            ResetProgress();
             UpdateButtons();
+            GenerationActivityChanged?.Invoke(this, EventArgs.Empty);
         }
     }
+
+    /// <summary>Cancel button。連打は無視し、実際の解除は <c>GenerateAsync</c> の完了後に行う。</summary>
+    private void CancelGenerate_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_isGenerating || _isCancelRequested)
+        {
+            return;
+        }
+
+        var cts = _videoGenerationCts;
+        if (cts is null || cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        // 先に状態を倒してから Cancel する（Cancel の同期 callback 中に再 click されても無視される）。
+        _isCancelRequested = true;
+        SetProgressDetail(CancelRequestedText);
+        UpdateButtons();
+        SetStatus("キャンセルしています...");
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // generation が直前に完了していた（finally の Dispose と競合）。何もしない。
+        }
+    }
+
+    /// <summary>video 生成の進捗（UI thread で呼ばれる）。値は Video Core のものをそのまま表示する。</summary>
+    private void OnCompositionProgress(VideoCompositionProgress progress)
+    {
+        // 完了後に遅れて届いた report は無視する（完了状態を進捗で上書きしない）。
+        if (!_isGenerating || _isCancelRequested)
+        {
+            return;
+        }
+
+        VideoProgressBar.Value = Math.Clamp(progress.OverallProgress, 0.0, 1.0) * 100.0;
+        SetProgressDetail(progress.StageDetail);
+    }
+
+    /// <summary>生成開始直後の初期表示（Video Core の最初の report が届く前）。</summary>
+    private void ResetProgress()
+    {
+        VideoProgressBar.Value = 0;
+        SetProgressDetail(GeneratingText);
+    }
+
+    private void SetProgressDetail(string? detail) =>
+        VideoProgressText.Text = string.IsNullOrWhiteSpace(detail) ? GeneratingText : detail;
 
     /// <summary>
     /// <see cref="VideoGenerationResult"/> を user-facing な status / dialog にする。
@@ -329,66 +424,28 @@ public partial class ContentsView : UserControl
     /// </summary>
     private void ApplyGenerationResult(VideoGenerationResult result)
     {
-        switch (result.Status)
+        var presentation = VideoGenerationPresentation.Describe(result);
+        SetStatus(presentation.StatusText);
+
+        switch (presentation.Dialog)
         {
-            case VideoGenerationStatus.Generated:
-                SetStatus("動画を生成しました。");
+            case VideoResultDialog.Error:
+                ShowError(presentation.StatusText, presentation.DialogDetail, MessageBoxImage.Error);
                 break;
 
-            case VideoGenerationStatus.ProjectNotFound:
-                SetStatus("プロジェクトが見つかりません。");
-                break;
-
-            case VideoGenerationStatus.RecordingMissing:
-                SetStatus("録画がありません。先に録画を作成してください。");
-                break;
-
-            case VideoGenerationStatus.StepsMissing:
-                SetStatus("手順がありません。動画を生成するには手順の確定が必要です。");
-                break;
-
-            case VideoGenerationStatus.SourceChanged:
-                SetStatus("生成中に内容が変更されました。最新の内容で再度生成してください。");
-                break;
-
-            case VideoGenerationStatus.ComposerUnavailable:
-                SetStatus("動画生成に必要な FFmpeg が見つかりません。");
-                ShowError(
-                    "動画生成に必要な FFmpeg が見つかりません。",
-                    result.ErrorMessage,
-                    MessageBoxImage.Error);
-                break;
-
-            default:
-                ApplyFailedResult(result);
+            case VideoResultDialog.RecoveryWarning:
+                // recovery 用 backup は UI 側から cleanup しない（自動削除もしない）。
+                MessageBox.Show(
+                    Window.GetWindow(this),
+                    "動画の保存に失敗し、旧動画の自動復旧にも失敗しました。" + Environment.NewLine +
+                    "復旧用バックアップを以下に保持しています。" + Environment.NewLine + Environment.NewLine +
+                    presentation.DialogDetail + Environment.NewLine + Environment.NewLine +
+                    "このフォルダーを削除しないでください。",
+                    "動画の生成に失敗しました",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 break;
         }
-    }
-
-    /// <summary>
-    /// 通常の failure と「手動 recovery が必要な failure」を分ける。
-    /// recovery 用 backup は UI 側から cleanup しない（自動削除もしない）。
-    /// </summary>
-    private void ApplyFailedResult(VideoGenerationResult result)
-    {
-        if (result.RecoveryDirectory is { } recoveryDirectory)
-        {
-            SetStatus("動画の保存に失敗しました。復旧用バックアップを保持しています。");
-
-            MessageBox.Show(
-                Window.GetWindow(this),
-                "動画の保存に失敗し、旧動画の自動復旧にも失敗しました。" + Environment.NewLine +
-                "復旧用バックアップを以下に保持しています。" + Environment.NewLine + Environment.NewLine +
-                recoveryDirectory + Environment.NewLine + Environment.NewLine +
-                "このフォルダーを削除しないでください。",
-                "動画の生成に失敗しました",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-            return;
-        }
-
-        SetStatus("動画の生成に失敗しました。");
-        ShowError("動画の生成に失敗しました。", result.ErrorMessage, MessageBoxImage.Error);
     }
 
     private void ShowError(string message, string? detail, MessageBoxImage icon)

@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.IO;
 using TrainingContent.App.State;
+using TrainingContent.Core.Models;
 using TrainingContent.Storage;
 using TrainingContent.Video;
 
@@ -55,12 +56,36 @@ public sealed class VideoGenerationCoordinator
     /// <summary>
     /// 指定 Project の Video を生成し、成功したら canonical artifact と metadata を置換する。
     /// 失敗しても既存の canonical video / metadata は変更しない。
+    ///
+    /// <para>
+    /// <paramref name="progress"/> は <see cref="VideoCompositionOptions.Progress"/> へそのまま渡す。
+    /// ここでは値の加工（stage 名の翻訳・進捗の丸め・捏造）を行わない
+    /// （<see cref="VideoCompositionProgress"/> の値は Video Core が authority）。
+    /// </para>
+    /// <para>
+    /// <paramref name="cancellationToken"/> が cancel された場合は例外を投げず
+    /// <see cref="VideoGenerationStatus.Cancelled"/> を返す。staging は破棄し、
+    /// canonical / metadata / Revision / UpdatedAtUtc は生成前のままにする。
+    /// rollback の判断は <see cref="VideoArtifactTransaction"/> の既存 semantics に従い、
+    /// ここで rollback logic を複製しない（recovery が必要な失敗は Cancelled へ丸めない）。
+    /// </para>
     /// </summary>
     public async Task<VideoGenerationResult> GenerateAsync(
         Guid projectId,
+        IProgress<VideoCompositionProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var project = await _projectStore.LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(true);
+        TrainingProject? project;
+        try
+        {
+            project = await _projectStore.LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            // staging も canonical も触っていない。cancel は failure ではない。
+            return Cancelled();
+        }
+
         if (project is null)
         {
             return new VideoGenerationResult(
@@ -129,7 +154,8 @@ public sealed class VideoGenerationCoordinator
                         OutputPath = staging.StagingPath,
                         Project = project,
                     },
-                    options: null,
+                    // MVP のその他 options は既定値のまま。UI から接続するのは progress だけ。
+                    new VideoCompositionOptions { Progress = progress },
                     cancellationToken)
                 .ConfigureAwait(true);
 
@@ -150,13 +176,22 @@ public sealed class VideoGenerationCoordinator
                         commit.RecoveryDirectory);
                 }
 
+                var status = VideoGenerationCommitClassifier.ToStatus(commit);
+                if (status == VideoGenerationStatus.Cancelled)
+                {
+                    Trace.TraceInformation(
+                        "VideoGenerationCoordinator: commit 中に cancel されました（rollback 済み）。");
+                }
+
                 return new VideoGenerationResult(
-                    ToStatus(commit.Status),
-                    ErrorMessage: commit.ErrorMessage,
+                    status,
+                    // cancel された場合に raw exception の message を UI へ流さない。
+                    ErrorMessage: status == VideoGenerationStatus.Cancelled ? null : commit.ErrorMessage,
                     RecoveryDirectory: commit.RecoveryRequired ? commit.RecoveryDirectory : null);
             }
 
             // 生成対象が Current Project のときだけ差し替える（別 Project の生成で巻き戻さない）。
+            // UI が観測する state なので、この publish は caller の context（UI thread）で行う。
             if (commit.Project is { } updated && _currentProject.IsCurrent(projectId))
             {
                 _currentProject.SetCurrent(updated);
@@ -165,6 +200,17 @@ public sealed class VideoGenerationCoordinator
             return new VideoGenerationResult(
                 VideoGenerationStatus.Generated,
                 CanonicalPath: commit.CanonicalPath);
+        }
+        catch (OperationCanceledException)
+        {
+            // compose 中の user cancel（renderer は ffmpeg の process tree を kill してから throw する）。
+            if (staging is not null)
+            {
+                _transaction.DiscardStaging(staging);
+            }
+
+            Trace.TraceInformation("VideoGenerationCoordinator: Video 生成をキャンセルしました。");
+            return Cancelled();
         }
         catch (Exception ex)
         {
@@ -182,13 +228,59 @@ public sealed class VideoGenerationCoordinator
         }
     }
 
-    private static VideoGenerationStatus ToStatus(VideoArtifactCommitStatus status) => status switch
+    private static VideoGenerationResult Cancelled() => new(VideoGenerationStatus.Cancelled);
+}
+
+/// <summary>
+/// <see cref="VideoArtifactTransaction.CommitAsync"/> の結果を <see cref="VideoGenerationStatus"/> へ分類する。
+///
+/// <para>
+/// 順序が意味を持つ: recovery が必要な失敗（rollback に失敗し backup を保持）は
+/// <b>cancellation へ丸めない</b>。manual recovery 対象の storage failure state を
+/// 「ユーザーが cancel した」と表示すると、backup の存在を UI から隠してしまうため。
+/// </para>
+/// <para>
+/// 逆に rollback 成功済みの失敗（<c>RecoveryRequired == false</c>）が
+/// <see cref="OperationCanceledException"/> を報告した場合は cancel として扱う
+/// （canonical は commit 前の状態へ戻っており、failure として見せる必要がない）。
+/// </para>
+/// </summary>
+public static class VideoGenerationCommitClassifier
+{
+    /// <summary>commit の失敗が「cancel された」ことを意味するか。</summary>
+    public static bool IsCancellation(VideoArtifactCommitResult commit)
     {
-        VideoArtifactCommitStatus.StagingMissing => VideoGenerationStatus.Failed,
-        VideoArtifactCommitStatus.ProjectNotFound => VideoGenerationStatus.ProjectNotFound,
-        VideoArtifactCommitStatus.SourceChanged => VideoGenerationStatus.SourceChanged,
-        _ => VideoGenerationStatus.Failed,
-    };
+        ArgumentNullException.ThrowIfNull(commit);
+
+        return commit.Status != VideoArtifactCommitStatus.Committed
+            && !commit.RecoveryRequired
+            && commit.Error is OperationCanceledException;
+    }
+
+    /// <summary>非 Committed な commit 結果を status へ写す。</summary>
+    public static VideoGenerationStatus ToStatus(VideoArtifactCommitResult commit)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+
+        if (commit.RecoveryRequired)
+        {
+            // rollback failure は manual recovery が必要な storage failure。cancel ではない。
+            return VideoGenerationStatus.Failed;
+        }
+
+        if (IsCancellation(commit))
+        {
+            return VideoGenerationStatus.Cancelled;
+        }
+
+        return commit.Status switch
+        {
+            VideoArtifactCommitStatus.StagingMissing => VideoGenerationStatus.Failed,
+            VideoArtifactCommitStatus.ProjectNotFound => VideoGenerationStatus.ProjectNotFound,
+            VideoArtifactCommitStatus.SourceChanged => VideoGenerationStatus.SourceChanged,
+            _ => VideoGenerationStatus.Failed,
+        };
+    }
 }
 
 /// <summary>Video 生成の結果。View が例外ではなくこの status で分岐できるようにする。</summary>
@@ -201,6 +293,9 @@ public enum VideoGenerationStatus
     SourceChanged,
     ComposerUnavailable,
     Failed,
+
+    /// <summary>ユーザー操作で cancel された（failure ではない）。canonical / metadata は生成前のまま。</summary>
+    Cancelled,
 }
 
 /// <summary>

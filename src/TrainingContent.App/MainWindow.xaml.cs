@@ -67,6 +67,7 @@ public partial class MainWindow : Window
         _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator);
         _contentsView.StatusChanged += OnStatusChanged;
         _contentsView.ProjectActivated += OnProjectActivated;
+        _contentsView.GenerationActivityChanged += OnGenerationActivityChanged;
 
         _recordingCoordinator.ActivityChanged += OnRecordingActivityChanged;
 
@@ -74,34 +75,42 @@ public partial class MainWindow : Window
     }
 
     // ---------------------------------------------------------------------
-    // Recording session lock（§26 / §27）
+    // Activity lock（録画 session / video 生成）
     // ---------------------------------------------------------------------
 
-    private void OnRecordingActivityChanged(object? sender, EventArgs e)
+    private void OnRecordingActivityChanged(object? sender, EventArgs e) => ApplyActivityLockOnUiThread();
+
+    private void OnGenerationActivityChanged(object? sender, EventArgs e) => ApplyActivityLockOnUiThread();
+
+    private void ApplyActivityLockOnUiThread()
     {
         if (Dispatcher.CheckAccess())
         {
-            ApplyRecordingLock();
+            ApplyActivityLock();
             return;
         }
 
-        Dispatcher.BeginInvoke(new Action(ApplyRecordingLock));
+        Dispatcher.BeginInvoke(new Action(ApplyActivityLock));
     }
 
     /// <summary>
-    /// 録画 session 中は他画面へ移動させない（Contents で別 Project を Open/Delete できなくする）。
-    /// 停止後は Navigation を復元する。
+    /// 録画 session 中・video 生成中は他画面へ移動させない
+    /// （録画中に Contents で別 Project を Open/Delete させない / 生成中に Review で内容を変えさせない）。
+    /// 両 activity の enable 判定は <see cref="ShellNavigationPolicy"/> が持つ。
     /// </summary>
-    private void ApplyRecordingLock()
+    private void ApplyActivityLock()
     {
-        var active = _recordingCoordinator.IsSessionActive;
+        var state = ShellNavigationPolicy.Resolve(
+            _recordingCoordinator.IsSessionActive,
+            _contentsView.IsGenerating);
 
-        NavHomeButton.IsEnabled = !active;
-        NavReviewButton.IsEnabled = !active;
-        NavContentsButton.IsEnabled = !active;
-        NavRecordingButton.IsEnabled = true;
+        NavHomeButton.IsEnabled = state.IsHomeEnabled;
+        NavReviewButton.IsEnabled = state.IsReviewEnabled;
+        NavContentsButton.IsEnabled = state.IsContentsEnabled;
+        // 録画中は Recording へ移動できる必要がある（停止操作を行う画面のため）。
+        NavRecordingButton.IsEnabled = state.IsRecordingEnabled;
 
-        if (active && !ReferenceEquals(PageHost.Content, _recordingView))
+        if (state.ForceRecordingPage && !ReferenceEquals(PageHost.Content, _recordingView))
         {
             // 録画中の強制遷移では Status 表示を上書きしない。
             ShowPage(NavRecordingButton, _recordingView, StatusText.Text);
@@ -120,6 +129,20 @@ public partial class MainWindow : Window
                 "録画中",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+
+            e.Cancel = true;
+            return;
+        }
+
+        // video 生成中は終了させない。暗黙 cancel にせず、Contents の Cancel button から止めさせる。
+        if (_contentsView.IsGenerating)
+        {
+            MessageBox.Show(
+                this,
+                "動画を生成中です。キャンセルまたは完了してから終了してください。",
+                "動画の生成",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
 
             e.Cancel = true;
             return;
