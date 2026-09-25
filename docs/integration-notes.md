@@ -163,3 +163,61 @@ catch
   Commit で実 MP4 に確定されること・Abort で canonical 無変更かつ staging 削除されることを確認。全 10 項目 PASS
 - **状態**: A 側実装・実機検証済み。例会で D 側の受領確認を残すのみ（§1 と同じ扱い）
 
+
+## 9. Event seq の物理発生順保証（2026-09-25 / D の E+F-B production runtime smoke 指摘・B 対応）
+
+D の E+F-B production runtime smoke で、保留左クリック（ダブルクリック判定待ち、最大約 900ms）
+より物理時刻が後の keyboard Event が先に seq を採番され、timestampMs は click < key のまま
+seq だけ逆転する contract-level issue を確認（StepBuilder は行順 = TrainingStep.Order なため
+Manual / Review の Step 順が物理操作と逆になる）。D 側では sort / 後処理 / seq 書換をしない
+方針のため、B 側（EventCapture）で解消した。
+
+### 対応 1: worker 側の書き出し保留（reorder buffer）
+
+- `OperationCaptureSession` の worker は queue から受けた Event を直接書かず、
+  `_reorderBuffer` に貯めてから物理時刻（QPC）順に書き出す。
+- 先頭（最古）Event より物理時刻が早い保留左クリックが `GlobalMouseHook` 側に残っている間は
+  書き出しを中断する。保留クリックはタイマー / 後続クリック / Stop 時 flush のいずれかで
+  必ず確定し queue へ届くため、待ちが無期限になることはない。
+- `GlobalMouseHook.PendingLeftClickQpc`（新規 public プロパティ）で保留クリックの物理クリック時刻を
+  照会できるようにした（`_clickSync` 下で読むため race なし）。
+- キー Event は保留クリック確定まで待たされる（最大 ~900ms）が、timestampMs は物理クリック時刻を
+  保持したままなので Canonical Timeline の整合は変わらない。append-only / Pause フィルタ /
+  stopped 終端 / MIN-5 世代ガードはすべて従来どおり。
+
+### 対応 2: lifecycle 行とユーザー Event の直列化
+
+- 同型の逆転が Pause / Resume でも起き得たため、`recording.paused` / `recording.resumed` の
+  書き出しを worker のユーザー Event 書き出し（`AppendUserEvent` / `FlushTextBuffer`）と同じ
+  `_textSync` で直列化した。
+- `AppendUserEvent` は書き出し直前に境界を再判定する（UIA・スクリーンショットなど重い処理を
+  挟んだ間に Pause された Event が、物理時刻「Pause より前」のまま paused 行より後へ割り込まない）。
+
+### 対応 3: writer の一時的書き込み失敗への耐性（追加発見）
+
+- 従来の `EventTimelineWriter.Append` は `_seq++` → `File.AppendAllText` の順で、events.jsonl が
+  別プロセス / Defender 等の `FileShare.Read` ハンドルに掴まれると書き込みが IOException になり、
+  **seq だけが空振りして進み該当 Event は欠落**していた（worker の 1 Event 単位の catch で握り潰し）。
+  実機のユニットテストでも再現（tests 側の events.jsonl ポーリング読みと衝突）。
+- 対応: 共有違反（一時的 IOException）を 10ms〜500ms のバックオフで最大 12 回再試行し、
+  **seq は書き込み成功時にのみ進める**。永続失敗は従来どおり例外伝播（Coordinator が fault 扱い）。
+  D 側が録画中に Review UI で events.jsonl を読む場合の Event 欠落抑止にもなる。
+
+### 実機検証
+
+- テスト追加 5 件（保留クリックより後のキーの順序保証 / 保留未確定のまま Stop しても stopped より前 /
+  保留クリックより古い Event は待たない / 処理中クリックと Pause の競合 / hook の保留照会 2 件）。
+  EventCapture.Tests 53/53 PASS（6 連続実施）。sln 443 も PASS。
+- テストは実フックを設置しない `InstallHooksForTest=false` で実行する
+  （テスト実行中の実入力が queue へ流れ込み、UIA の重い処理で worker が滞留し
+    タイミング依存になるため。フック単体の保留照会は別テストで検証）。
+
+### 補足（D への返答）
+
+- 追加観察の「synthetic F5 specialKey が events.jsonl に記録されない」は **仕様どおり**:
+  F5 (VK 0x74) は契約 §11.2 の MVP specialKey 対象（Enter/Tab/Escape/Backspace/Delete/方向キー）
+  にも可印刷キーにも含まれないため、フックが分類せず Event を生成しない。
+  runtime smoke でキー記録を確認する場合は対象キーの変更（例: Enter）か、
+  対象キー拡張を Shared Contract 変更（4 人合議）として別途議論する。
+- 対応 1-3 はすべて B 担当モジュール内の変更で、Shared Contract（Phase 0 契約）は不変。
+  D の targeted recheck を待つ。

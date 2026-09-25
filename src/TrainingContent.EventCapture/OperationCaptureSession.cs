@@ -50,6 +50,12 @@ public sealed class OperationCaptureSession : IDisposable
     private Thread? _worker;
     private Exception? _hookInitError;
 
+    /// <summary>書き出し前の Event の保留バッファ（worker スレッド専用）。
+    /// ダブルクリック判定待ちの保留左クリックより物理時刻が後の Event を先に書くと
+    /// seq（発生順）が物理発生順にならないため（契約 §5.3）、保留クリックの確定を
+    /// 挟み込んでから物理時刻順に書き出す。</summary>
+    private readonly List<RawItem> _reorderBuffer = new();
+
     /// <summary>Pause 時点の Canonical 時刻（境界フィルタ用）。未設定は -1。
     /// アプリスレッドが書き / ワーカーが読むため Volatile でアクセスする
     /// （long? のままだと非アトミック読み書きになる。MasterClock の監査指摘と同型）。</summary>
@@ -132,20 +138,23 @@ public sealed class OperationCaptureSession : IDisposable
             _writer = new EventTimelineWriter(Path.Combine(ProjectDirectory, "events.jsonl"));
             _uiAutomation = new UiAutomationService();
 
-            _mouseHook = new GlobalMouseHook();
-            _keyboardHook = new GlobalKeyboardHook();
-            _mouseHook.ClickCaptured += OnMouseClick;
-            _keyboardHook.KeyboardInputCaptured += OnKeyboardInput;
-
-            var hookThreadReady = new ManualResetEventSlim();
-            _hookThread = new Thread(HookThreadProc) { IsBackground = true };
-            _hookThread.SetApartmentState(ApartmentState.STA);
-            _hookThread.Start(hookThreadReady);
-            hookThreadReady.Wait();
-
-            if (_hookInitError is not null)
+            if (InstallHooksForTest)
             {
-                throw new InvalidOperationException("フックの初期化に失敗しました。", _hookInitError);
+                _mouseHook = new GlobalMouseHook();
+                _keyboardHook = new GlobalKeyboardHook();
+                _mouseHook.ClickCaptured += OnMouseClick;
+                _keyboardHook.KeyboardInputCaptured += OnKeyboardInput;
+
+                var hookThreadReady = new ManualResetEventSlim();
+                _hookThread = new Thread(HookThreadProc) { IsBackground = true };
+                _hookThread.SetApartmentState(ApartmentState.STA);
+                _hookThread.Start(hookThreadReady);
+                hookThreadReady.Wait();
+
+                if (_hookInitError is not null)
+                {
+                    throw new InvalidOperationException("フックの初期化に失敗しました。", _hookInitError);
+                }
             }
 
             _worker = new Thread(ProcessQueue) { IsBackground = true };
@@ -192,10 +201,18 @@ public sealed class OperationCaptureSession : IDisposable
         lock (_stateSync)
         {
             ThrowIfNotRunning();
-            FlushTextBuffer();
-            _clock.Pause();
-            Volatile.Write(ref _pauseBoundaryMs, _clock.NowMs());
-            _writer!.Append("recording.paused", _clock.NowMs(), new { });
+
+            // boundary の設定と recording.paused の書き出しを worker のユーザー Event
+            // 書き出し（AppendUserEvent / FlushTextBuffer）と同じロックで直列化する。
+            // これにより paused 行の後へ「物理的には Pause より前」のユーザー Event が
+            // 割り込めない（処理中だった Event は Append 直前の境界再判定で破棄される）。
+            lock (_textSync)
+            {
+                FlushTextBuffer();
+                _clock.Pause();
+                Volatile.Write(ref _pauseBoundaryMs, _clock.NowMs());
+                _writer!.Append("recording.paused", _clock.NowMs(), new { });
+            }
         }
     }
 
@@ -205,9 +222,17 @@ public sealed class OperationCaptureSession : IDisposable
         lock (_stateSync)
         {
             ThrowIfNotRunning();
-            FlushTextBuffer();
-            _clock.Resume();
-            _writer!.Append("recording.resumed", _clock.NowMs(), new { });
+
+            // recording.resumed も paused と同じく _textSync 内で書く
+            // （Resume 呼び出しより物理時刻が後のユーザー Event が resumed 行より
+            //   先に書かれる入り込みを防ぐ。boundary は Resume 後も減算値として使う
+            //   ので、ここではリセットしない）。
+            lock (_textSync)
+            {
+                FlushTextBuffer();
+                _clock.Resume();
+                _writer!.Append("recording.resumed", _clock.NowMs(), new { });
+            }
         }
     }
 
@@ -406,15 +431,60 @@ public sealed class OperationCaptureSession : IDisposable
     {
         foreach (var item in _queue.GetConsumingEnumerable())
         {
+            // ダブルクリック判定待ちの保留左クリックより物理時刻が後の Event を
+            // 先に書くと、seq（発生順）と timestampMs（時間位置）が逆転する
+            // （保留クリックは最大約 900ms 後に確定するため。契約 §5.3 /
+            //   D の E+F-B production runtime smoke 指摘）。
+            // 一度保留バッファへ貯め、保留クリックの確定を挟み込んでから
+            // 物理時刻（QPC）順に書き出す。
+            _reorderBuffer.Add(item);
+            _reorderBuffer.Sort(static (a, b) => a.QpcTimestamp.CompareTo(b.QpcTimestamp));
+            TryReleaseReorder();
+        }
+
+        // 入力の締め切り後は保留クリックの確定を待てないため、残りを全て書き切る
+        // （recording.stopped より前に書かれるよう、Stop は Join してから
+        //   FlushTextBuffer(final) / stopped 書き出しに進む）。
+        TryReleaseReorder(final: true);
+    }
+
+    /// <summary>
+    /// 保留バッファから書き出せる Event を物理時刻順に書き出す（worker スレッド専用）。
+    /// 先頭（最古）の Event より物理時刻が早い保留左クリックがフック側に残っている間は、
+    /// その確定を待つために書き出しを中断する。保留クリックは必ずタイマーもしくは
+    /// 後続クリック / Stop 時の flush で確定し queue へ届くため、待ちが無期限になることはない。
+    /// </summary>
+    /// <param name="final">true なら保留クリックの確定を待たずに全て書き切る（queue 締め切り後）。</param>
+    private void TryReleaseReorder(bool final = false)
+    {
+        while (_reorderBuffer.Count > 0)
+        {
+            var candidate = _reorderBuffer[0];
+            var pendingQpc = final ? null : GetPendingLeftClickQpc();
+            if (pendingQpc is { } qpc && qpc < candidate.QpcTimestamp)
+            {
+                // 保留クリックの方が物理的に先 → 確定を待つ（次の Event 到達時に再判定）。
+                return;
+            }
+
+            _reorderBuffer.RemoveAt(0);
             try
             {
-                ProcessItem(item);
+                ProcessItem(candidate);
             }
             catch
             {
-                // 1 Event の処理失敗で録画全体を止めない。
+                // 1 Event の処理失敗で録画全体を止めない（従来どおり）。
             }
         }
+    }
+
+    /// <summary>保留中の左クリックの物理クリック時刻（QPC）。保留がなければ null。</summary>
+    private long? GetPendingLeftClickQpc()
+    {
+        return PendingLeftClickQpcSourceForTest is { } source
+            ? source()
+            : _mouseHook?.PendingLeftClickQpc;
     }
 
     private void ProcessItem(RawItem item)
@@ -428,8 +498,7 @@ public sealed class OperationCaptureSession : IDisposable
         // さらに Pause より前に発生していながら処理が追いつかなかった
         // 後追いイベント（例: P 押下自体のキーダウン）も破棄する。
         // 境界そのもの（==）は Pause 中に発生した Event の凍結 timestampMs なので破棄対象に含める。
-        var boundary = Volatile.Read(ref _pauseBoundaryMs);
-        if (_clock.IsPaused || (boundary >= 0 && timestampMs <= boundary))
+        if (IsOutsideCanonicalTimeline(timestampMs))
         {
             return;
         }
@@ -573,6 +642,13 @@ public sealed class OperationCaptureSession : IDisposable
         }
     }
 
+    /// <summary>Pause 中、もしくは Pause 境界より前の発生（後追い処理）かどうか。</summary>
+    private bool IsOutsideCanonicalTimeline(long timestampMs)
+    {
+        var boundary = Volatile.Read(ref _pauseBoundaryMs);
+        return _clock.IsPaused || (boundary >= 0 && timestampMs <= boundary);
+    }
+
     /// <summary>
     /// ユーザー Event（mouse.* / keyboard.specialKey / keyboard.shortcut）を events.jsonl へ出力する。
     /// Stop の最終 flush（_userEventsFinal 設定）と同じロックで直列化するため、
@@ -584,6 +660,15 @@ public sealed class OperationCaptureSession : IDisposable
         lock (_textSync)
         {
             if (_userEventsFinal || _writer is null)
+            {
+                return;
+            }
+
+            // UIA・スクリーンショットなど重い処理を挟んだ間に Pause された場合、
+            // この Event は Canonical Timeline の外側へ後追いで書かれないよう、
+            // 書き出し直前に境界を再判定する（recording.paused と同じロックで
+            // 直列化されているため、paused 行より後への割り込みも起きない）。
+            if (IsOutsideCanonicalTimeline(timestampMs))
             {
                 return;
             }
@@ -605,11 +690,35 @@ public sealed class OperationCaptureSession : IDisposable
     /// <summary>テスト用: ワーカースレッドが動作中か（Stop 時の後片付け確認に使用）。</summary>
     internal bool IsWorkerAliveForTest => _worker?.IsAlive ?? false;
 
+    /// <summary>テスト用: 保留左クリック QPC の取得元を差し替える（null なら実フック参照）。
+    /// 保留クリックと後発キーの書き出し順を疑似入力で再現するために使う。</summary>
+    internal Func<long?>? PendingLeftClickQpcSourceForTest { get; set; }
+
+    /// <summary>テスト用: false で Start するとグローバル フック / フックスレッドを
+    /// 設置しない（実機ではテスト実行中の実入力が queue へ流れ込み、UIA の重い処理で
+    /// worker が滞留するため、queue / worker / 書き出し順の検証を妨げる）。</summary>
+    internal bool InstallHooksForTest { get; set; } = true;
+
     /// <summary>テスト用: 実フックを経由せず mouse.click 相当を queue へ投入する。
     /// 時刻は実クロック（QPC）から採番するため、実入力が混ざっても timestampMs の単調性は保たれる。</summary>
     internal void EnqueueMouseClickForTest(int x, int y)
     {
         Enqueue(new RawItem(Stopwatch.GetTimestamp(), RawKind.Mouse, X: x, Y: y, ClickType: MouseClickKind.Click));
+    }
+
+    /// <summary>テスト用: 物理クリック時刻（QPC）を指定して mouse.click 相当を投入する
+    /// （保留クリック確定を後追いで到達する Event として再現するため）。</summary>
+    internal void EnqueueMouseClickForTest(int x, int y, long qpcTimestamp)
+    {
+        Enqueue(new RawItem(qpcTimestamp, RawKind.Mouse, X: x, Y: y, ClickType: MouseClickKind.Click));
+    }
+
+    /// <summary>テスト用: keyboard.shortcut 相当を queue へ投入する。</summary>
+    internal void EnqueueShortcutForTest(string shortcutName)
+    {
+        Enqueue(new RawItem(
+            Stopwatch.GetTimestamp(), RawKind.Key,
+            KeyKind: KeyboardInputKind.Shortcut, ShortcutName: shortcutName));
     }
 
     private static UiElementPayload? ToUiElementPayload(UiElementInfo info)
@@ -638,7 +747,7 @@ public sealed class OperationCaptureSession : IDisposable
         public const string Key = "key";
     }
 
-    private sealed record RawItem(
+    internal sealed record RawItem(
         long QpcTimestamp,
         string Kind,
         int X = 0,
