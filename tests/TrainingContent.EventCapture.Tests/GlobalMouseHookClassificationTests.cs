@@ -75,4 +75,34 @@ public class GlobalMouseHookClassificationTests
         var click = Assert.Single(captured);
         Assert.Equal(MouseClickKind.Click, click.ActionType);
     }
+
+    [Fact]
+    public void 保留クリックのQPC照会_確定後はnullを返す()
+    {
+        // OperationCaptureSession の書き出し順制御（保留クリックより後の Event を
+        // 確定まで待たせる）が参照する保留状態の検証。
+        using var hook = new GlobalMouseHook();
+        Assert.Null(hook.PendingLeftClickQpc);
+
+        var qpcA = Stopwatch.GetTimestamp();
+        hook.HandleLeftClick(10, 10, qpcA);
+        Assert.Equal(qpcA, hook.PendingLeftClickQpc);
+
+        hook.FlushPendingLeftClick();
+        Assert.Null(hook.PendingLeftClickQpc);
+    }
+
+    [Fact]
+    public void ダブルクリック確定後も保留照会はnullを返す()
+    {
+        using var hook = new GlobalMouseHook();
+        var captured = new List<ClickCapturedEventArgs>();
+        hook.ClickCaptured += (_, e) => captured.Add(e);
+
+        hook.HandleLeftClick(10, 10, Stopwatch.GetTimestamp());
+        hook.HandleLeftClick(12, 12, Stopwatch.GetTimestamp());
+
+        Assert.Equal(MouseClickKind.DoubleClick, Assert.Single(captured).ActionType);
+        Assert.Null(hook.PendingLeftClickQpc);
+    }
 }

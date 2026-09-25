@@ -77,6 +77,15 @@ public sealed class GlobalMouseHook : IDisposable
 
     public bool IsRunning => _hookHandle != IntPtr.Zero;
 
+    /// <summary>保留中の左クリックの物理クリック時刻（QPC）。保留がなければ null。
+    /// ワーカー側の書き出し順制御に使う: 保留クリックより物理時刻が後の Event を
+    /// 先に書くと、seq（発生順）と timestampMs（時間位置）が逆転するため
+    /// （OperationCaptureSession が書き出し前に照会する。契約 §5.3）。</summary>
+    public long? PendingLeftClickQpc
+    {
+        get { lock (_clickSync) { return _pendingLeftClick?.QpcTimestamp; } }
+    }
+
     public void Start()
     {
         if (IsRunning)
