@@ -38,10 +38,17 @@
                            FontWeight="SemiBold"
                            Foreground="#FF333333"
                            TextWrapping="Wrap" />
-                <TextBlock Text="録画を完了すると手順が生成されます。"
+                <TextBlock Text="録画を完了すると手順が生成されます。録画済みの場合は手動で手順を追加することもできます。"
                            Margin="0,12,0,0"
                            Foreground="#FF888888"
                            TextWrapping="Wrap" />
+                <Button x:Name="NoStepsAddStepButton"
+                        Content="手順を追加"
+                        Width="120" Height="30"
+                        Margin="0,16,0,0"
+                        HorizontalAlignment="Left"
+                        ToolTip="この録画に手順を 1 件追加します"
+                        Click="AddStep_Click" />
             </StackPanel>
 
             <!-- ===== Review 本体（編集可能） =====
@@ -81,6 +88,12 @@
                                 Margin="6,0,0,0"
                                 ToolTip="選択中の手順を削除（保存するまで確定しません）"
                                 Click="DeleteStep_Click" />
+                        <Button x:Name="AddStepButton"
+                                Content="追加"
+                                Width="64" Height="28"
+                                Margin="6,0,0,0"
+                                ToolTip="選択中の手順の直後に手順を追加（すぐに保存されます）"
+                                Click="AddStep_Click" />
                     </StackPanel>
                     <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White">
                         <ListBox x:Name="StepListBox"

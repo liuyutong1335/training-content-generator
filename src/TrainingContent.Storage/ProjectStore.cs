@@ -208,9 +208,96 @@ public sealed class ProjectStore
     }
 
     // ---------------------------------------------------------------------
-    // List
+    // Manual Step insertion（B2: StepReviewUpdate とは別の narrow mutation boundary）
     // ---------------------------------------------------------------------
 
+    /// <summary>
+    /// manual Step（Action = <see cref="StepActions.Manual"/>）を 1 件挿入して保存する。
+    ///
+    /// <para>
+    /// 位置は Order 昇順の canonical 順序で決める（UI order と StartMs chronology は独立）。
+    /// <paramref name="afterStepId"/> の直後、<c>null</c> なら Steps が空なら最初、それ以外は最後の後ろ。
+    /// StartMs は <see cref="ManualStepPlacementCalculator"/> の midpoint rule で決め、
+    /// 余裕が無ければ <see cref="ManualStepInsertStatus.NoTimeSpace"/> として<b>何も変更しない</b>。
+    /// </para>
+    /// <para>
+    /// 既存 Step で変更するのは <c>Order</c>（1..N への normalize）だけで、timestamp を含む他の field は触らない。
+    /// teaching content の mutation なので <c>Revision</c> を 1 進める（Outputs の metadata は残すため artifact は Stale になる）。
+    /// </para>
+    /// </summary>
+    public async Task<ManualStepInsertResult> InsertManualStepAsync(
+        Guid id,
+        Guid? afterStepId,
+        string title,
+        CancellationToken cancellationToken = default)
+    {
+        // 入力の検査は disk に触る前に行う。
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return new ManualStepInsertResult(ManualStepInsertStatus.InvalidTitle);
+        }
+
+        var project = await LoadProjectAsync(id, cancellationToken).ConfigureAwait(false)
+            ?? throw new ProjectStoreException($"Project が見つかりません: {id:D}");
+
+        if (project.Recording is null)
+        {
+            return new ManualStepInsertResult(ManualStepInsertStatus.RecordingMissing);
+        }
+
+        var ordered = project.Steps.OrderBy(step => step.Order).ToList();
+
+        var placement = ManualStepPlacementCalculator.Calculate(
+            ordered, project.Recording.DurationMs, afterStepId);
+
+        if (placement.Status is ManualStepPlacementStatus.AnchorNotFound
+            or ManualStepPlacementStatus.NoTimeSpace)
+        {
+            return new ManualStepInsertResult(
+                placement.Status == ManualStepPlacementStatus.AnchorNotFound
+                    ? ManualStepInsertStatus.AnchorNotFound
+                    : ManualStepInsertStatus.NoTimeSpace);
+        }
+
+        var step = new TrainingStep
+        {
+            Id = Guid.NewGuid(),
+            Order = placement.InsertionIndex + 1, // 直後に 1..N へ normalize する。
+            StartMs = placement.StartMs,
+            EndMs = null,
+            Action = StepActions.Manual,
+            Target = null,
+            // B1 の edit 経路と同じく Title は normalization しない（caller が渡した文字列のまま）。
+            // blank はこの手前で reject 済み。
+            Title = title,
+            Description = null,
+            Caution = null,
+            ExpectedResult = null,
+            ScreenshotPath = null,
+            SourceEventIds = [],
+        };
+
+        ordered.Insert(placement.InsertionIndex, step);
+
+        // Order は保存後の UI 順で 1..N（既存 Step で変更してよいのは Order だけ）。
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            ordered[i].Order = i + 1;
+        }
+
+        project.Steps = ordered;
+        project.Revision += 1;
+        project.UpdatedAtUtc = DateTimeOffset.UtcNow;
+
+        await SaveProjectAsync(project, cancellationToken).ConfigureAwait(false);
+
+        return new ManualStepInsertResult(
+            ManualStepInsertStatus.Inserted, project, step.Id, step.StartMs);
+    }
+
+    // ---------------------------------------------------------------------
+    // List
+    // ---------------------------------------------------------------------
     /// <summary>
     /// Projects Root 直下の有効 Project を <see cref="ProjectSummary"/> として列挙する。
     /// 壊れた Project は skip し、他の正常 Project の取得を妨げない。

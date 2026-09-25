@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using TrainingContent.App.Services;
 using TrainingContent.App.State;
+using TrainingContent.Storage;
 
 namespace TrainingContent.App.Views;
 
@@ -184,7 +185,10 @@ public partial class ReviewView : UserControl
     }
 
     /// <summary>canonical から detached draft を作り直して再描画する。保存成功・破棄・外部変更で使う。</summary>
-    private void RebuildAndRender(bool preserveSelection)
+    /// <param name="selectStepId">
+    /// 指定した場合はその Step を選択する（manual Step 追加直後に新 Step を選ぶため）。
+    /// </param>
+    private void RebuildAndRender(bool preserveSelection, Guid? selectStepId = null)
     {
         var previousStepId = preserveSelection && StepListBox.SelectedItem is ReviewDraftStep selected
             ? selected.StepId
@@ -218,8 +222,9 @@ public partial class ReviewView : UserControl
         ShowPanel(ReviewPanel);
         StepListBox.ItemsSource = newDraft.Steps;
 
-        // Project が変わった場合（previousStepId なし）は先頭、保存後などは同じ Step を選び直す。
-        var index = previousStepId is { } stepId ? newDraft.IndexOf(stepId) : 0;
+        // 明示指定 > 直前の選択 > 先頭 の順で選ぶ。
+        var targetStepId = selectStepId ?? previousStepId;
+        var index = targetStepId is { } stepId ? newDraft.IndexOf(stepId) : 0;
         StepListBox.SelectedIndex = index >= 0 ? index : 0;
 
         UpdateEditorFromSelection();
@@ -279,6 +284,12 @@ public partial class ReviewView : UserControl
         MoveDownButton.IsEnabled = hasDraft && !_isMutatingCanonical && _draft!.CanMoveDown(index);
         DeleteStepButton.IsEnabled = hasDraft && !_isMutatingCanonical && index >= 0 && index < stepCount;
 
+        // manual Step 追加（B2）は canonical mutation。可否は pure helper が持つ
+        // （dirty / busy / Recording 無しでは押させない）。Steps が空でも追加できる。
+        var addDecision = ResolveManualStepAddDecision();
+        AddStepButton.IsEnabled = addDecision.CanAdd;
+        NoStepsAddStepButton.IsEnabled = addDecision.CanAdd;
+
         // clean のときは Save を押させない（実質変更なしの no-op は Storage 側でも保証される）。
         SaveButton.IsEnabled = dirty && !_isMutatingCanonical;
         DiscardButton.IsEnabled = dirty && !_isMutatingCanonical;
@@ -303,6 +314,95 @@ public partial class ReviewView : UserControl
         RedactButton.IsEnabled = canSelect && _selection is not null;
         ClearSelectionButton.IsEnabled = canSelect && _selection is not null;
     }
+
+    // ---------------------------------------------------------------------
+    // Manual Step 追加（B2）
+    // ---------------------------------------------------------------------
+
+    private ManualStepAddDecision ResolveManualStepAddDecision()
+    {
+        var project = _currentProject.CurrentProject;
+        var selectedStepId = (StepListBox.SelectedItem as ReviewDraftStep)?.StepId;
+
+        return ManualStepAddPolicy.Resolve(
+            hasProject: project is not null,
+            hasRecording: project?.Recording is not null,
+            isDirty: HasUnsavedChanges,
+            isMutatingCanonical: _isMutatingCanonical,
+            selectedStepId: selectedStepId);
+    }
+
+    /// <summary>
+    /// manual Step を選択中 Step の直後（selection が無ければ最後の後ろ、Steps が空なら最初）へ追加する。
+    ///
+    /// <para>
+    /// draft 内に仮追加はしない（既存 <c>StepReviewUpdate</c> は existing Step edit 専用で unknown StepId を
+    /// reject する契約のため）。Dialog → independent canonical mutation → draft rebuild の順で行う。
+    /// </para>
+    /// </summary>
+    private async void AddStep_Click(object sender, RoutedEventArgs e)
+    {
+        var project = _currentProject.CurrentProject;
+        var projectId = _draftProjectId;
+
+        var decision = ResolveManualStepAddDecision();
+        if (!decision.CanAdd || project is null || projectId is null)
+        {
+            if (decision.Guidance is { } guidance)
+            {
+                SetStatus(guidance);
+            }
+
+            return;
+        }
+
+        var dialog = new AddManualStepWindow { Owner = Window.GetWindow(this) };
+        if (dialog.ShowDialog() != true)
+        {
+            return; // Cancel
+        }
+
+        _isMutatingCanonical = true;
+        UpdateCommandStates();
+
+        try
+        {
+            var result = await _workspace.InsertManualStepAsync(
+                projectId.Value, decision.AnchorStepId, dialog.StepTitle);
+
+            if (result.Succeeded && result.StepId is { } newStepId)
+            {
+                // canonical が更新されているので draft を作り直し、新しい Step を選択して editor を出す。
+                RebuildAndRender(preserveSelection: false, selectStepId: newStepId);
+                SetStatus("手順を追加しました。");
+                return;
+            }
+
+            SetStatus(DescribeManualStepInsertFailure(result.Status));
+        }
+        catch (ProjectStoreException ex)
+        {
+            Trace.TraceError("ReviewView: manual Step の追加に失敗しました — {0}", ex);
+            SetStatus("手順を追加できませんでした。");
+        }
+        finally
+        {
+            _isMutatingCanonical = false;
+            UpdateCommandStates();
+        }
+    }
+
+    /// <summary>manual Step 追加の failure を user-facing message にする（raw exception は出さない）。</summary>
+    private static string DescribeManualStepInsertFailure(ManualStepInsertStatus status) => status switch
+    {
+        ManualStepInsertStatus.RecordingMissing => ManualStepAddPolicy.RecordingMissingGuidance,
+        ManualStepInsertStatus.AnchorNotFound =>
+            "選択中の手順が見つかりません。手順一覧を選び直してください。",
+        ManualStepInsertStatus.NoTimeSpace =>
+            "この位置には時間上の余裕がないため手順を追加できません。",
+        ManualStepInsertStatus.InvalidTitle => "タイトルを入力してください。",
+        _ => "手順を追加できませんでした。",
+    };
 
     /// <summary>draft が変化した（dirty が動いた）ときの再評価。</summary>
     private void OnDraftChanged(object? sender, EventArgs e)

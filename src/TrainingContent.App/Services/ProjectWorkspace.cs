@@ -117,6 +117,34 @@ public sealed class ProjectWorkspace
     }
 
     /// <summary>
+    /// manual Step（B2）を 1 件挿入する。位置・StartMs・Order・Revision の判断はすべて Storage 側が持ち、
+    /// ここでは Current Project の差し替えだけを行う。
+    ///
+    /// <para>
+    /// Current Project の差し替えは <b>Storage の保存が成功した後</b>だけ行う。
+    /// Storage が投げた場合・failure status の場合はここへ到達しないため、Current Project は旧状態のまま残る。
+    /// 別 Project を更新しても Current Project は上書きしない（identity guard）。
+    /// </para>
+    /// </summary>
+    public async Task<ManualStepInsertResult> InsertManualStepAsync(
+        Guid projectId,
+        Guid? afterStepId,
+        string title,
+        CancellationToken cancellationToken = default)
+    {
+        // caller の context（UI thread）を維持する（SetCurrent を View が観測するため）。
+        var result = await _projectStore
+            .InsertManualStepAsync(projectId, afterStepId, title, cancellationToken);
+
+        if (result.Succeeded && result.Project is { } updated && _currentProject.IsCurrent(projectId))
+        {
+            _currentProject.SetCurrent(updated);
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Review UI（B1）の編集結果を Step 集合へ反映する。
     /// Current Project を更新した場合は Current Project も最新 snapshot へ差し替える。
     ///
