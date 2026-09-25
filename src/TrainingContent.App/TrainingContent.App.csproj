@@ -25,6 +25,7 @@
     <ProjectReference Include="..\TrainingContent.Capture\TrainingContent.Capture.csproj" />
     <ProjectReference Include="..\TrainingContent.EventCapture\TrainingContent.EventCapture.csproj" />
     <ProjectReference Include="..\TrainingContent.Video\TrainingContent.Video.csproj" />
+    <ProjectReference Include="..\TrainingContent.Screenshot\TrainingContent.Screenshot.csproj" />
   </ItemGroup>
 
 </Project>

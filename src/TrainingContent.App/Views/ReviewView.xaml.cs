@@ -1,13 +1,16 @@
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using TrainingContent.App.Services;
 using TrainingContent.App.State;
 
 namespace TrainingContent.App.Views;
 
 /// <summary>
-/// 手順確認（Review）。Current Project の Steps を編集する（B1）。
+/// 手順確認（Review）。Current Project の Steps を編集し（B1）、Screenshot の BlackBox redaction（C）を行う。
 ///
 /// <para>
 /// 編集対象は detached draft（<see cref="ReviewDraft"/>) のみ。canonical な
@@ -17,13 +20,19 @@ namespace TrainingContent.App.Views;
 /// （この View から ProjectStore を直接呼ばない）。
 /// </para>
 /// <para>
-/// 今回の範囲: Title / Description / Caution / ExpectedResult の編集、Step の削除、
-/// ↑↓ による並べ替え、保存、dirty 表示、破棄。手動追加（B2）・Screenshot 差し替え（B3）・
-/// Redaction（C）・StartMs/EndMs・Action/Target/ScreenshotPath/SourceEventIds の編集は持たない。
+/// Redaction は <see cref="ScreenshotRedactionCoordinator"/> に委譲する。この View は
+/// preview の表示・選択矩形（control 座標）の取得・結果の反映だけを行い、
+/// path 解決 / 出力命名 / Storage 更新 / 画像処理は持たない。
 /// </para>
 /// <para>
-/// 意図的に持たないもの: MVVM framework / 独自の diff エンジン / path resolver /
-/// 画像の読込 / 独自の永続化 / Dispatcher を跨ぐ非同期設計。
+/// 範囲: Title / Description / Caution / ExpectedResult の編集、Step の削除、↑↓ による並べ替え、
+/// 保存、dirty 表示、破棄、screenshot preview、矩形選択と BlackBox redaction。
+/// 手動追加（B2）・Screenshot 差し替え（B3）・StartMs/EndMs・Action/Target/ScreenshotPath/SourceEventIds の編集、
+/// BlackBox 以外の redaction（Pixelate / Blur / marker）は持たない。
+/// </para>
+/// <para>
+/// 意図的に持たないもの: MVVM framework / 独自の diff エンジン / 独自の path 解決 / 独自の永続化 /
+/// selection resize handle / undo history / Dispatcher を跨ぐ非同期設計。
 /// </para>
 /// </summary>
 public partial class ReviewView : UserControl
@@ -38,27 +47,48 @@ public partial class ReviewView : UserControl
 
     private const string SaveInProgressMessage = "保存中です。完了後にもう一度お試しください。";
 
+    /// <summary>未保存の編集がある状態で redaction を要求されたときの案内（§11）。</summary>
+    private const string DirtyDraftGuidance = "先に手順の変更を保存または破棄してください。";
+
+    private const string NoScreenshotMessage = "スクリーンショットなし";
+    private const string ScreenshotUnavailableMessage = "スクリーンショットを表示できません。";
+
     private readonly CurrentProjectContext _currentProject;
     private readonly ProjectWorkspace _workspace;
+    private readonly ScreenshotRedactionCoordinator _screenshotRedaction;
 
     private ReviewDraft? _draft;
     private Guid? _draftProjectId;
 
-    /// <summary>Save 実行中。Save 自身が起こす CurrentProjectChanged を external change と区別する。</summary>
-    private bool _isSaving;
+    /// <summary>
+    /// canonical mutation（project.json 保存 / Screenshot redaction）実行中。
+    /// 自身が起こす CurrentProjectChanged を external change と区別し、この間は編集・離脱・再実行を受け付けない。
+    /// </summary>
+    private bool _isMutatingCanonical;
 
     /// <summary>external change の確認中（confirmation 中の再入で無限 refresh にしないための guard）。</summary>
     private bool _handlingExternalChange;
 
-    public ReviewView(CurrentProjectContext currentProject, ProjectWorkspace workspace)
+    // ---- Screenshot preview / redaction 選択（control 座標で保持し、実行時に bitmap pixel へ変換する） ----
+    private int _previewBitmapWidth;
+    private int _previewBitmapHeight;
+    private Point? _dragStart;
+    private ScreenshotRect? _selection;
+
+    public ReviewView(
+        CurrentProjectContext currentProject,
+        ProjectWorkspace workspace,
+        ScreenshotRedactionCoordinator screenshotRedaction)
     {
         ArgumentNullException.ThrowIfNull(currentProject);
         ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(screenshotRedaction);
 
         InitializeComponent();
 
         _currentProject = currentProject;
         _workspace = workspace;
+        _screenshotRedaction = screenshotRedaction;
 
         _currentProject.CurrentProjectChanged += OnCurrentProjectChanged;
 
@@ -71,8 +101,11 @@ public partial class ReviewView : UserControl
     /// <summary>未保存の編集があるか（navigation / window close の保護に使う）。</summary>
     public bool HasUnsavedChanges => _draft?.IsDirty == true;
 
-    /// <summary>保存処理が進行中か（この間は編集も離脱も受け付けない）。</summary>
-    public bool IsSaving => _isSaving;
+    /// <summary>
+    /// canonical mutation（project.json 保存 / Screenshot redaction）の進行中か。
+    /// この間は編集・離脱・再実行を受け付けない（<see cref="MainWindow"/> の close 拒否にも使う）。
+    /// </summary>
+    public bool IsSaving => _isMutatingCanonical;
 
     /// <summary>
     /// Review から離れてよいかを確認する。dirty な draft があるときだけ確認し、
@@ -83,7 +116,7 @@ public partial class ReviewView : UserControl
     {
         // 保存中は破棄させない。保存は進行しているため「破棄しました」と表示しても実体は保存され、
         // 表示と状態が食い違う（保存完了後の再構築に任せる）。
-        if (_isSaving)
+        if (_isMutatingCanonical)
         {
             SetStatus(SaveInProgressMessage);
             return false;
@@ -114,13 +147,13 @@ public partial class ReviewView : UserControl
     /// <para>
     /// 未編集なら黙って最新 canonical を読み直す。dirty のまま外部から変更された場合は
     /// ユーザーの編集を silently discard せず、破棄の同意を取る。
-    /// Save 自身が起こした変更（<see cref="_isSaving"/> 中）は external change として扱わない
+    /// Save 自身が起こした変更（<see cref="_isMutatingCanonical"/> 中）は external change として扱わない
     /// （draft の再構築は Save 成功後の処理が明示的に行う）。
     /// </para>
     /// </summary>
     private void OnCurrentProjectChanged(object? sender, EventArgs e)
     {
-        if (_isSaving || _handlingExternalChange)
+        if (_isMutatingCanonical || _handlingExternalChange)
         {
             return;
         }
@@ -225,6 +258,8 @@ public partial class ReviewView : UserControl
         EditorContentPanel.Visibility = step is null ? Visibility.Collapsed : Visibility.Visible;
         EditorEmptyPanel.Visibility = step is null ? Visibility.Visible : Visibility.Collapsed;
 
+        UpdateScreenshotPreview(step);
+
         // 全件削除した状態では、保存で確定することを案内する。
         var draftIsEmpty = _draft is not null && _draft.Steps.Count == 0;
         EditorEmptyHint.Text = draftIsEmpty
@@ -240,19 +275,33 @@ public partial class ReviewView : UserControl
         var dirty = HasUnsavedChanges;
         var stepCount = hasDraft ? _draft!.Steps.Count : 0;
 
-        MoveUpButton.IsEnabled = hasDraft && !_isSaving && _draft!.CanMoveUp(index);
-        MoveDownButton.IsEnabled = hasDraft && !_isSaving && _draft!.CanMoveDown(index);
-        DeleteStepButton.IsEnabled = hasDraft && !_isSaving && index >= 0 && index < stepCount;
+        MoveUpButton.IsEnabled = hasDraft && !_isMutatingCanonical && _draft!.CanMoveUp(index);
+        MoveDownButton.IsEnabled = hasDraft && !_isMutatingCanonical && _draft!.CanMoveDown(index);
+        DeleteStepButton.IsEnabled = hasDraft && !_isMutatingCanonical && index >= 0 && index < stepCount;
 
         // clean のときは Save を押させない（実質変更なしの no-op は Storage 側でも保証される）。
-        SaveButton.IsEnabled = dirty && !_isSaving;
-        DiscardButton.IsEnabled = dirty && !_isSaving;
+        SaveButton.IsEnabled = dirty && !_isMutatingCanonical;
+        DiscardButton.IsEnabled = dirty && !_isMutatingCanonical;
 
-        // 保存中は編集を受け付けない。保存成功時の draft 再構築で、保存中に入った編集が
-        // 黙って消えるのを防ぐ（TwoWay binding は 1 打鍵ごとに draft へ反映済みなので、
-        // ここで無効化しても未確定の入力は残らない）。
-        StepListBox.IsEnabled = !_isSaving;
-        EditorContentPanel.IsEnabled = !_isSaving;
+        // 保存 / redaction 中は編集を受け付けない。canonical mutation 中の入力が
+        // 成功後の draft 再構築で黙って消えるのを防ぐ（TwoWay binding は 1 打鍵ごとに draft へ
+        // 反映済みなので、ここで無効化しても未確定の入力は残らない）。
+        StepListBox.IsEnabled = !_isMutatingCanonical;
+        EditorContentPanel.IsEnabled = !_isMutatingCanonical;
+
+        // redaction は canonical mutation 中と selection 無効時には押させない。
+        // （dirty のときは「先に保存または破棄」を案内するため押せるままにする）
+        UpdateRedactAvailability();
+    }
+
+    /// <summary>Redaction button / selection 操作の可否を selection と busy state から決める。</summary>
+    private void UpdateRedactAvailability()
+    {
+        var canSelect = !_isMutatingCanonical && _previewBitmapWidth > 0 && _previewBitmapHeight > 0;
+
+        SelectionOverlay.IsEnabled = canSelect;
+        RedactButton.IsEnabled = canSelect && _selection is not null;
+        ClearSelectionButton.IsEnabled = canSelect && _selection is not null;
     }
 
     /// <summary>draft が変化した（dirty が動いた）ときの再評価。</summary>
@@ -324,7 +373,7 @@ public partial class ReviewView : UserControl
         var draft = _draft;
         var projectId = _draftProjectId;
 
-        if (draft is null || projectId is null || _isSaving)
+        if (draft is null || projectId is null || _isMutatingCanonical)
         {
             return;
         }
@@ -358,9 +407,9 @@ public partial class ReviewView : UserControl
 
         var saved = false;
 
-        // _isSaving を立てた後は、保存後の UI 更新も含めて必ず finally を通す
+        // _isMutatingCanonical を立てた後は、保存後の UI 更新も含めて必ず finally を通す
         // （フラグが立ったままになると Save / Discard が恒久的に無効化されるため）。
-        _isSaving = true;
+        _isMutatingCanonical = true;
 
         try
         {
@@ -380,7 +429,7 @@ public partial class ReviewView : UserControl
         }
         finally
         {
-            _isSaving = false;
+            _isMutatingCanonical = false;
             UpdateCommandStates();
         }
 
@@ -394,7 +443,7 @@ public partial class ReviewView : UserControl
         try
         {
             // 成功: Workspace が CurrentProject を差し替え済み。draft は最新 canonical から作り直す
-            // （Save 自身が起こした CurrentProjectChanged は _isSaving で無視されている）。
+            // （Save 自身が起こした CurrentProjectChanged は _isMutatingCanonical で無視されている）。
             RebuildAndRender(preserveSelection: true);
             SetStatus("保存しました。");
             StatusChanged?.Invoke(this, "手順を保存しました");
@@ -422,6 +471,230 @@ public partial class ReviewView : UserControl
         RebuildAndRender(preserveSelection: false);
         SetStatus("変更を破棄しました。");
     }
+
+    // ---------------------------------------------------------------------
+    // Screenshot preview / redaction 選択
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// 選択中 Step の ScreenshotPath を preview に読み込む。読み込めない場合は generic message を表示し、
+    /// redaction を無効化する（absolute path / exception message は UI に出さない）。
+    /// </summary>
+    private void UpdateScreenshotPreview(ReviewDraftStep? step)
+    {
+        ClearSelection();
+        ScreenshotImage.Source = null;
+        _previewBitmapWidth = 0;
+        _previewBitmapHeight = 0;
+        ScreenshotMessageText.Text = string.Empty;
+        ScreenshotStatusText.Text = string.Empty;
+
+        if (step is null || _draftProjectId is not { } projectId)
+        {
+            UpdateRedactAvailability();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(step.ScreenshotPath))
+        {
+            ScreenshotMessageText.Text = NoScreenshotMessage;
+            UpdateRedactAvailability();
+            return;
+        }
+
+        // path 解決は App 側 boundary（coordinator → resolver）に集約する。rooted / '..' / 非 png はここで弾かれる。
+        var resolved = _screenshotRedaction.ResolveScreenshotPath(projectId, step.ScreenshotPath);
+        if (!resolved.Succeeded || resolved.AbsolutePath is null || !File.Exists(resolved.AbsolutePath))
+        {
+            Trace.TraceWarning("ReviewView: screenshot を解決できません — {0}", resolved.ErrorMessage);
+            ScreenshotMessageText.Text = ScreenshotUnavailableMessage;
+            UpdateRedactAvailability();
+            return;
+        }
+
+        var bitmap = TryLoadBitmap(resolved.AbsolutePath);
+        if (bitmap is null)
+        {
+            ScreenshotMessageText.Text = ScreenshotUnavailableMessage;
+            UpdateRedactAvailability();
+            return;
+        }
+
+        ScreenshotImage.Source = bitmap;
+        _previewBitmapWidth = bitmap.PixelWidth;
+        _previewBitmapHeight = bitmap.PixelHeight;
+        UpdateRedactAvailability();
+    }
+
+    /// <summary>
+    /// file lock を残さない読み込み。<see cref="BitmapCacheOption.OnLoad"/> で stream を閉じた後も表示できる。
+    /// 失敗は <c>null</c>（呼出側が generic message を出す）。
+    /// </summary>
+    private static BitmapImage? TryLoadBitmap(string absolutePath)
+    {
+        try
+        {
+            using var stream = new FileStream(absolutePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = stream;
+            bitmap.EndInit();
+            bitmap.Freeze();
+            return bitmap;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            Trace.TraceWarning("ReviewView: screenshot を読み込めません — {0}", ex.GetType().Name);
+            return null;
+        }
+    }
+
+    private void SelectionOverlay_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_isMutatingCanonical || _previewBitmapWidth <= 0 || _previewBitmapHeight <= 0)
+        {
+            return;
+        }
+
+        _dragStart = e.GetPosition(SelectionOverlay);
+        _selection = null;
+        SelectionRectangle.Visibility = Visibility.Collapsed;
+        UpdateRedactAvailability();
+        SelectionOverlay.CaptureMouse();
+    }
+
+    private void SelectionOverlay_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_dragStart is not { } start || !SelectionOverlay.IsMouseCaptured)
+        {
+            return;
+        }
+
+        UpdateSelectionRectangle(start, e.GetPosition(SelectionOverlay));
+    }
+
+    private void SelectionOverlay_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_dragStart is not { } start)
+        {
+            return;
+        }
+
+        SelectionOverlay.ReleaseMouseCapture();
+        _dragStart = null;
+
+        var end = e.GetPosition(SelectionOverlay);
+        _selection = NormalizeSelection(start, end);
+        UpdateSelectionRectangle(start, end);
+        UpdateRedactAvailability();
+    }
+
+    /// <summary>drag 中の矩形表示のみを更新する（確定は mouse release 時）。</summary>
+    private void UpdateSelectionRectangle(Point start, Point end)
+    {
+        var rect = NormalizeSelection(start, end);
+
+        Canvas.SetLeft(SelectionRectangle, rect.X);
+        Canvas.SetTop(SelectionRectangle, rect.Y);
+        SelectionRectangle.Width = rect.Width;
+        SelectionRectangle.Height = rect.Height;
+        SelectionRectangle.Visibility = rect.Width > 0 && rect.Height > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    /// <summary>右下 / 左上どちらの drag でも正の幅・高さになるよう正規化する。</summary>
+    private static ScreenshotRect NormalizeSelection(Point a, Point b) =>
+        new(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
+
+    private void ClearSelection_Click(object sender, RoutedEventArgs e)
+    {
+        ClearSelection();
+        UpdateRedactAvailability();
+    }
+
+    /// <summary>選択状態を破棄する（Step 切替・redaction 成功後・破棄時にも呼ぶ）。</summary>
+    private void ClearSelection()
+    {
+        _dragStart = null;
+        _selection = null;
+        SelectionRectangle.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 選択範囲を BlackBox redaction し、新しい edited PNG 経由で ScreenshotPath を更新する。
+    /// 実際の処理（path 解決 / 出力命名 / Storage 更新）は <see cref="ScreenshotRedactionCoordinator"/> が持つ。
+    /// </summary>
+    private async void Redact_Click(object sender, RoutedEventArgs e)
+    {
+        var step = StepListBox.SelectedItem as ReviewDraftStep;
+        var projectId = _draftProjectId;
+
+        if (step is null || projectId is null || _isMutatingCanonical)
+        {
+            return;
+        }
+
+        // 未保存の text edit があると、ScreenshotPath update が CurrentProject を更新したときに
+        // draft と canonical の ownership が競合する。先に保存 / 破棄を促す。
+        if (HasUnsavedChanges)
+        {
+            SetScreenshotStatus(DirtyDraftGuidance);
+            return;
+        }
+
+        if (_selection is not { } selection)
+        {
+            SetScreenshotStatus("黒塗りする範囲を画像上でドラッグして選んでください。");
+            return;
+        }
+
+        // control 座標 → 実 bitmap pixel（letterbox と はみ出しは intersection で吸収する）。
+        var region = ScreenshotViewportMapper.ToBitmapRectangle(
+            _previewBitmapWidth,
+            _previewBitmapHeight,
+            SelectionOverlay.ActualWidth,
+            SelectionOverlay.ActualHeight,
+            selection);
+
+        if (region is null)
+        {
+            SetScreenshotStatus("画像の範囲を選んでください。");
+            return;
+        }
+
+        _isMutatingCanonical = true;
+        SetScreenshotStatus("黒塗りしています…");
+        UpdateCommandStates();
+
+        try
+        {
+            var outcome = await _screenshotRedaction.RedactAsync(
+                projectId.Value, step.StepId, step.ScreenshotPath, region);
+
+            SetScreenshotStatus(outcome.Message);
+
+            if (outcome.Succeeded)
+            {
+                // canonical が更新されているので draft を作り直す（preview も新 path で再読込され、選択は clear される）。
+                RebuildAndRender(preserveSelection: true);
+                SetStatus("スクリーンショットを更新しました");
+            }
+            else
+            {
+                StatusChanged?.Invoke(this, outcome.Message);
+            }
+        }
+        finally
+        {
+            _isMutatingCanonical = false;
+            UpdateCommandStates();
+        }
+    }
+
+    private void SetScreenshotStatus(string message) => ScreenshotStatusText.Text = message;
 
     // ---------------------------------------------------------------------
     // Helpers

@@ -36,13 +36,15 @@ public partial class MainWindow : Window
         CurrentProjectContext currentProject,
         ProjectWorkspace workspace,
         RecordingCoordinator recordingCoordinator,
-        VideoGenerationCoordinator videoGenerationCoordinator)
+        VideoGenerationCoordinator videoGenerationCoordinator,
+        ScreenshotRedactionCoordinator screenshotRedaction)
     {
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(currentProject);
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(recordingCoordinator);
         ArgumentNullException.ThrowIfNull(videoGenerationCoordinator);
+        ArgumentNullException.ThrowIfNull(screenshotRedaction);
 
         InitializeComponent();
 
@@ -57,9 +59,9 @@ public partial class MainWindow : Window
         _recordingView = new RecordingView(recordingCoordinator, currentProject);
         _recordingView.StatusChanged += OnStatusChanged;
 
-        // Review は Current Project の Steps を編集する（B1）。editable control は detached draft に
-        // だけ bind し、保存は ProjectWorkspace 経由でのみ行う。他 View と同じく constructor injection。
-        _reviewView = new ReviewView(currentProject, workspace);
+        // Review は Current Project の Steps を編集し（B1）、Screenshot の BlackBox redaction（C）を行う。
+        // editable control は detached draft にだけ bind し、保存 / redaction は Services 経由でのみ行う。
+        _reviewView = new ReviewView(currentProject, workspace, screenshotRedaction);
         _reviewView.StatusChanged += OnStatusChanged;
 
         _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator);
@@ -123,12 +125,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 保存中は終了させない（保存は進行中で、破棄の同意と実体が食い違うため）。
+        // canonical mutation（手順の保存 / Screenshot redaction）中は終了させない
+        // （進行中の mutation と破棄の同意が食い違うため）。
         if (_reviewView.IsSaving)
         {
             MessageBox.Show(
                 this,
-                "手順を保存しています。完了してから終了してください。",
+                "手順を更新しています。完了してから終了してください。",
                 "手順の編集",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);

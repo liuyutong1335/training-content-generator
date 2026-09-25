@@ -2,6 +2,7 @@
 using TrainingContent.App.Services;
 using TrainingContent.App.State;
 using TrainingContent.Capture;
+using TrainingContent.Screenshot.Redaction;
 using TrainingContent.Storage;
 using TrainingContent.Video.Renderer;
 
@@ -28,6 +29,12 @@ public partial class App : Application
 
         var workspace = new ProjectWorkspace(projectStore, currentProject);
 
+        // Screenshot redaction（C）。Screenshot Core は path 命名も Project 更新も行わない契約のため、
+        // orchestration（path 解決 / output 命名 / Storage 更新）は App 側の coordinator が持つ。
+        // View / Coordinator が BlackBoxScreenshotRedactor を new しない（生成は Composition Root のみ）。
+        var screenshotRedaction = new ScreenshotRedactionCoordinator(
+            new BlackBoxScreenshotRedactor(), projectStore, workspace);
+
         // 録画 Engine は App lifetime で 1 instance だけ生成する（IDisposable の所有はこの Root）。
         // App から ScreenRecorderLib を参照しない。境界は IRecordingEngine のみ。
         _recordingEngine = new ScreenRecorderRecordingEngine();
@@ -53,7 +60,12 @@ public partial class App : Application
             () => new FfmpegVideoRenderer());
 
         var window = new MainWindow(
-            projectStore, currentProject, workspace, recordingCoordinator, videoGenerationCoordinator);
+            projectStore,
+            currentProject,
+            workspace,
+            recordingCoordinator,
+            videoGenerationCoordinator,
+            screenshotRedaction);
         MainWindow = window;
         window.Show();
     }

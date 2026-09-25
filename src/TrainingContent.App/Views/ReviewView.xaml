@@ -207,28 +207,59 @@
                         </Grid>
                     </DockPanel>
 
-                    <!-- ===== Screenshot Preview（placeholder を維持: path resolver / 画像読込は未実装） ===== -->
+                    <!-- ===== Screenshot Preview + Redaction 選択 ===== -->
                     <DockPanel Grid.Row="2">
                         <TextBlock DockPanel.Dock="Top"
                                    Text="スクリーンショット"
                                    FontSize="11"
                                    Foreground="#FF888888"
                                    Margin="0,0,0,6" />
-                        <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White" Height="120">
-                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding ScreenshotPlaceholderText, Mode=OneWay}"
+                        <StackPanel DockPanel.Dock="Bottom"
+                                    Orientation="Horizontal"
+                                    Margin="0,8,0,0">
+                            <Button x:Name="RedactButton"
+                                    Content="範囲を黒塗り"
+                                    Width="120" Height="28"
+                                    ToolTip="画像上をドラッグして範囲を選び、その範囲を黒塗りした新しい画像を作成します"
+                                    Click="Redact_Click" />
+                            <Button x:Name="ClearSelectionButton"
+                                    Content="選択を解除"
+                                    Width="96" Height="28"
+                                    Margin="6,0,0,0"
+                                    Click="ClearSelection_Click" />
+                            <TextBlock x:Name="ScreenshotStatusText"
+                                       Margin="10,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="#FF555555"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Border x:Name="ScreenshotPreviewBorder"
+                                BorderBrush="#FFD0D0D0"
+                                BorderThickness="1"
+                                Background="White"
+                                Height="200">
+                            <Grid>
+                                <!-- Stretch=Uniform（縦横比維持）。letterbox は coordinate 変換側で吸収する。 -->
+                                <Image x:Name="ScreenshotImage" Stretch="Uniform" />
+                                <!-- drag で 1 rectangle を選ぶ。transparent でないと hit test されない。 -->
+                                <Canvas x:Name="SelectionOverlay"
+                                        Background="Transparent"
+                                        MouseLeftButtonDown="SelectionOverlay_MouseLeftButtonDown"
+                                        MouseMove="SelectionOverlay_MouseMove"
+                                        MouseLeftButtonUp="SelectionOverlay_MouseLeftButtonUp">
+                                    <Rectangle x:Name="SelectionRectangle"
+                                               Stroke="#FF1F6FEB"
+                                               StrokeThickness="1.5"
+                                               Fill="#331F6FEB"
+                                               Visibility="Collapsed" />
+                                </Canvas>
+                                <TextBlock x:Name="ScreenshotMessageText"
                                            Foreground="#FF888888"
                                            HorizontalAlignment="Center"
-                                           TextWrapping="Wrap"
-                                           TextAlignment="Center" />
-                                <TextBlock Text="{Binding ScreenshotPathText, Mode=OneWay}"
-                                           Margin="0,8,0,0"
-                                           FontSize="11"
-                                           Foreground="#FFAAAAAA"
-                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
                                            TextAlignment="Center"
                                            TextWrapping="Wrap" />
-                            </StackPanel>
+                            </Grid>
                         </Border>
                     </DockPanel>
 
