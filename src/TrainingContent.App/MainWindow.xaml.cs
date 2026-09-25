@@ -37,7 +37,8 @@ public partial class MainWindow : Window
         ProjectWorkspace workspace,
         RecordingCoordinator recordingCoordinator,
         VideoGenerationCoordinator videoGenerationCoordinator,
-        ScreenshotRedactionCoordinator screenshotRedaction)
+        ScreenshotRedactionCoordinator screenshotRedaction,
+        ManualGenerationCoordinator manualGeneration)
     {
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(currentProject);
@@ -45,6 +46,7 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(recordingCoordinator);
         ArgumentNullException.ThrowIfNull(videoGenerationCoordinator);
         ArgumentNullException.ThrowIfNull(screenshotRedaction);
+        ArgumentNullException.ThrowIfNull(manualGeneration);
 
         InitializeComponent();
 
@@ -64,7 +66,7 @@ public partial class MainWindow : Window
         _reviewView = new ReviewView(currentProject, workspace, screenshotRedaction);
         _reviewView.StatusChanged += OnStatusChanged;
 
-        _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator);
+        _contentsView = new ContentsView(projectStore, workspace, videoGenerationCoordinator, manualGeneration);
         _contentsView.StatusChanged += OnStatusChanged;
         _contentsView.ProjectActivated += OnProjectActivated;
         _contentsView.GenerationActivityChanged += OnGenerationActivityChanged;
@@ -94,7 +96,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 録画 session 中・video 生成中は他画面へ移動させない
+    /// 録画 session 中・artifact 生成（video / manual）中は他画面へ移動させない
     /// （録画中に Contents で別 Project を Open/Delete させない / 生成中に Review で内容を変えさせない）。
     /// 両 activity の enable 判定は <see cref="ShellNavigationPolicy"/> が持つ。
     /// </summary>
@@ -102,7 +104,7 @@ public partial class MainWindow : Window
     {
         var state = ShellNavigationPolicy.Resolve(
             _recordingCoordinator.IsSessionActive,
-            _contentsView.IsGenerating);
+            _contentsView.IsArtifactGenerationActive);
 
         NavHomeButton.IsEnabled = state.IsHomeEnabled;
         NavReviewButton.IsEnabled = state.IsReviewEnabled;
@@ -141,6 +143,20 @@ public partial class MainWindow : Window
                 this,
                 "動画を生成中です。キャンセルまたは完了してから終了してください。",
                 "動画の生成",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            e.Cancel = true;
+            return;
+        }
+
+        // manual 生成中は終了させない。cancel 手段が無いので「完了してから」と案内する。
+        if (_contentsView.IsManualGenerating)
+        {
+            MessageBox.Show(
+                this,
+                "マニュアルを生成中です。完了してから終了してください。",
+                "マニュアルの生成",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
 

@@ -1,7 +1,8 @@
 namespace TrainingContent.App.Services;
 
 /// <summary>
-/// 録画 session と video 生成という 2 つの activity から Shell navigation の enable 状態を決める純粋 helper。
+/// 録画 session と Contents の artifact 生成（video / manual）という activity から
+/// Shell navigation の enable 状態を決める純粋 helper。
 ///
 /// <para>
 /// <see cref="MainWindow"/> が ActivityChanged のたびに評価する。両 activity は通常 UI から同時には
@@ -22,9 +23,12 @@ public readonly record struct ShellNavigationState(
 /// <inheritdoc cref="ShellNavigationState"/>
 public static class ShellNavigationPolicy
 {
-    public static ShellNavigationState Resolve(bool recordingActive, bool videoGenerating)
+    /// <param name="artifactGenerating">
+    /// Contents の artifact 生成（video / manual のどちらか、または両方）が進行中かどうか。
+    /// </param>
+    public static ShellNavigationState Resolve(bool recordingActive, bool artifactGenerating)
     {
-        if (recordingActive && videoGenerating)
+        if (recordingActive && artifactGenerating)
         {
             // 想定外の同時 activity。navigation を塞ぎ、page も動かさない。
             return new ShellNavigationState(
@@ -46,9 +50,9 @@ public static class ShellNavigationPolicy
                 ForceRecordingPage: true);
         }
 
-        if (videoGenerating)
+        if (artifactGenerating)
         {
-            // 生成中: Contents に留まらせる（cancel は Contents の Cancel button から行う）。
+            // 生成中: Contents に留まらせる（video の cancel は Contents の Cancel button から行う）。
             return new ShellNavigationState(
                 IsHomeEnabled: false,
                 IsRecordingEnabled: false,

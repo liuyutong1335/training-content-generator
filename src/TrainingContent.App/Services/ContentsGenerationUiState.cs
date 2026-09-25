@@ -1,11 +1,15 @@
 namespace TrainingContent.App.Services;
 
 /// <summary>
-/// <see cref="Views.ContentsView"/> の video 生成中 state（button / progress / cancel の可否）を決める純粋 helper。
+/// <see cref="Views.ContentsView"/> の artifact 生成中 state（button / progress / cancel の可否）を決める純粋 helper。
 ///
 /// <para>
 /// cancel を要求しても <b>lock は解除しない</b>（<see cref="IsContentMutationEnabled"/> は false のまま）。
 /// 実際に <c>GenerateAsync</c> が戻って <c>isGenerating</c> が false になった時点で解除される。
+/// </para>
+/// <para>
+/// Manual 生成は軽量なので progress / cancel UI を持たない（video の progress / cancel は
+/// <paramref name="isManualGenerating"/> の間は表示しない）。
 /// </para>
 /// </summary>
 public readonly record struct ContentsGenerationUiState(
@@ -25,12 +29,20 @@ public readonly record struct ContentsGenerationUiState(
 /// <inheritdoc cref="ContentsGenerationUiState"/>
 public static class ContentsGenerationUiStateResolver
 {
+    /// <param name="isManualGenerating">
+    /// Manual 生成中（video とは独立した busy state）。既存 call 互換のため既定 false。
+    /// </param>
     public static ContentsGenerationUiState Resolve(
         bool isLoading,
         bool isGenerating,
-        bool isCancelRequested)
+        bool isCancelRequested,
+        bool isManualGenerating = false)
     {
-        if (!isGenerating)
+        // video / manual どちらの生成中でも内容操作と grid は止める。
+        // video の progress / cancel は video 生成中のときだけ出す。
+        var anyGenerating = isGenerating || isManualGenerating;
+
+        if (!anyGenerating)
         {
             // idle: 内容操作は自由。progress / cancel は出さない。
             return new ContentsGenerationUiState(
@@ -46,9 +58,9 @@ public static class ContentsGenerationUiStateResolver
             IsContentMutationEnabled: false,
             // 生成中は一覧そのものを止める（selection 変更・行ダブルクリックも含めて）。
             IsGridEnabled: false,
-            IsProgressVisible: true,
-            IsCancelVisible: true,
+            IsProgressVisible: isGenerating,
+            IsCancelVisible: isGenerating,
             // cancel 済みなら再度押させない（連打は無視する）。lock は維持。
-            IsCancelEnabled: !isCancelRequested);
+            IsCancelEnabled: isGenerating && !isCancelRequested);
     }
 }

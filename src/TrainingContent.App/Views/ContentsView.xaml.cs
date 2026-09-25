@@ -39,11 +39,13 @@ public partial class ContentsView : UserControl
     private readonly ProjectStore _projectStore;
     private readonly ProjectWorkspace _workspace;
     private readonly VideoGenerationCoordinator _videoGeneration;
+    private readonly ManualGenerationCoordinator _manualGeneration;
     private readonly ObservableCollection<ProjectSummary> _projects = [];
 
     private bool _isLoading;
     private bool _isGenerating;
     private bool _isCancelRequested;
+    private bool _isManualGenerating;
     private bool _hasLoaded;
 
     /// <summary>
@@ -57,26 +59,38 @@ public partial class ContentsView : UserControl
     /// <summary>Project を作成・オープンし、Home 表示へ切り替えるべきとき。</summary>
     public event EventHandler<string>? ProjectActivated;
 
-    /// <summary>video 生成の開始 / 終了で発火する（UI thread）。Shell navigation lock の更新に使う。</summary>
+    /// <summary>
+    /// Contents の artifact 生成（video / manual）の開始 / 終了で発火する（UI thread）。
+    /// Shell navigation lock の更新に使う。
+    /// </summary>
     public event EventHandler? GenerationActivityChanged;
 
-    /// <summary>video 生成中かどうか。Shell の navigation lock 判定に使う。</summary>
+    /// <summary>video 生成中かどうか（video 専用の progress / cancel UI の判定に使う）。</summary>
     public bool IsGenerating => _isGenerating;
+
+    /// <summary>manual 生成中かどうか。</summary>
+    public bool IsManualGenerating => _isManualGenerating;
+
+    /// <summary>video / manual いずれかの artifact 生成が進行中かどうか（Shell の lock 判定に使う）。</summary>
+    public bool IsArtifactGenerationActive => _isGenerating || _isManualGenerating;
 
     public ContentsView(
         ProjectStore projectStore,
         ProjectWorkspace workspace,
-        VideoGenerationCoordinator videoGeneration)
+        VideoGenerationCoordinator videoGeneration,
+        ManualGenerationCoordinator manualGeneration)
     {
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(videoGeneration);
+        ArgumentNullException.ThrowIfNull(manualGeneration);
 
         InitializeComponent();
 
         _projectStore = projectStore;
         _workspace = workspace;
         _videoGeneration = videoGeneration;
+        _manualGeneration = manualGeneration;
 
         ProjectGrid.ItemsSource = _projects;
 
@@ -278,7 +292,8 @@ public partial class ContentsView : UserControl
     {
         var selected = ProjectGrid.SelectedItem as ProjectSummary;
         var hasSelection = selected is not null;
-        var state = ContentsGenerationUiStateResolver.Resolve(_isLoading, _isGenerating, _isCancelRequested);
+        var state = ContentsGenerationUiStateResolver.Resolve(
+            _isLoading, _isGenerating, _isCancelRequested, _isManualGenerating);
 
         RefreshButton.IsEnabled = state.IsContentMutationEnabled;
         NewProjectButton.IsEnabled = state.IsContentMutationEnabled;
@@ -288,7 +303,13 @@ public partial class ContentsView : UserControl
         DeleteButton.IsEnabled = state.IsContentMutationEnabled && hasSelection;
         ProjectGrid.IsEnabled = state.IsGridEnabled;
 
-        // ここは convenience の事前確認。最終的な precondition は VideoGenerationCoordinator が authority。
+        // ここは convenience の事前確認。最終的な precondition は各 Coordinator が authority。
+        // Manual の input authority は reviewed Steps なので StepCount だけを見る（録画時間は不要）。
+        ManualGenerateButton.IsEnabled = state.IsGenerateEnabled(selected is { StepCount: > 0 });
+        ManualGenerateButton.Content = selected is null || selected.ManualStatus == ArtifactGenerationState.Missing
+            ? "マニュアルを生成"
+            : "マニュアルを再生成";
+
         GenerateButton.IsEnabled = state.IsGenerateEnabled(
             selected is { StepCount: > 0, DurationMs: not null });
         // 未選択時に「再生成」と出さない（selected が null のとき ?. 比較は false に落ちる）。
@@ -301,6 +322,86 @@ public partial class ContentsView : UserControl
         GenerationPanel.Visibility = state.IsProgressVisible ? Visibility.Visible : Visibility.Collapsed;
         CancelGenerateButton.Visibility = state.IsCancelVisible ? Visibility.Visible : Visibility.Collapsed;
         CancelGenerateButton.IsEnabled = state.IsCancelEnabled;
+    }
+
+    // ---------------------------------------------------------------------
+    // Manual Generate
+    // ---------------------------------------------------------------------
+
+    private async void ManualGenerate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading || _isGenerating || _isManualGenerating
+            || ProjectGrid.SelectedItem is not ProjectSummary selected)
+        {
+            return;
+        }
+
+        // 対象 Project を capture する。生成中に selection が動いても追従しない。
+        var projectId = selected.Id;
+
+        _isManualGenerating = true;
+        UpdateButtons();
+        SetStatus("マニュアルを生成しています...");
+        GenerationActivityChanged?.Invoke(this, EventArgs.Empty);
+
+        try
+        {
+            var outcome = await _manualGeneration.GenerateAsync(projectId);
+
+            // 一覧を作り直して ManualStatus を更新する（selection は LoadAsync が復元する）。
+            if (outcome.Status is ManualGenerationStatus.Generated
+                or ManualGenerationStatus.ProjectNotFound
+                or ManualGenerationStatus.SourceChanged)
+            {
+                await LoadAsync();
+            }
+
+            ApplyManualGenerationResult(outcome);
+        }
+        finally
+        {
+            // lock は Coordinator が完全に戻るまで解除しない。
+            _isManualGenerating = false;
+            UpdateButtons();
+            GenerationActivityChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>
+    /// <see cref="ManualGenerationOutcome"/> を user-facing な status / dialog にする。
+    /// Exception.ToString() / stack trace は UI に出さない。
+    /// </summary>
+    private void ApplyManualGenerationResult(ManualGenerationOutcome outcome)
+    {
+        SetStatus(outcome.Message);
+
+        if (outcome.RecoveryDirectory is { } recoveryDirectory)
+        {
+            // recovery 用 backup は UI 側から cleanup しない（自動削除もしない）。
+            MessageBox.Show(
+                Window.GetWindow(this),
+                "マニュアルの保存に失敗し、旧ファイルの自動復旧にも失敗しました。" + Environment.NewLine +
+                "復旧用バックアップを以下に保持しています。" + Environment.NewLine + Environment.NewLine +
+                recoveryDirectory + Environment.NewLine + Environment.NewLine +
+                "このフォルダーを削除しないでください。",
+                "マニュアルの生成に失敗しました",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        if (outcome.Status == ManualGenerationStatus.GenerationRejected)
+        {
+            // Manual Core の safe な Error を detail として見せる（raw exception ではない）。
+            var detail = outcome.Errors.Count == 0 ? null : string.Join(Environment.NewLine, outcome.Errors);
+            ShowError(outcome.Message, detail, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (outcome.Status == ManualGenerationStatus.Failed)
+        {
+            ShowError(outcome.Message, outcome.ErrorMessage, MessageBoxImage.Error);
+        }
     }
 
     // ---------------------------------------------------------------------

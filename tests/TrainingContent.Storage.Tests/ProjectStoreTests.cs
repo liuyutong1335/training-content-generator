@@ -501,6 +501,12 @@ public class ProjectStoreTests
             GeneratedAtUtc = DateTimeOffset.UtcNow,
             SourceRevision = project.Revision,
         };
+        project.Outputs.ManualHtml = new GeneratedArtifact
+        {
+            Path = "manual/manual.html",
+            GeneratedAtUtc = DateTimeOffset.UtcNow,
+            SourceRevision = project.Revision,
+        };
         project.Outputs.TrainingVideo = new GeneratedArtifact
         {
             Path = "output/training_video.mp4",
@@ -509,20 +515,23 @@ public class ProjectStoreTests
         };
         await store.SaveProjectAsync(project);
 
-        // metadata はあるが実ファイルが無い → false
+        // metadata はあるが実ファイルが無い → false（Manual は pair なので両方必要）
         var withoutFiles = await store.ListProjectsAsync();
         var s1 = Assert.Single(withoutFiles);
         Assert.False(s1.HasManual);
+        Assert.Equal(ArtifactGenerationState.Missing, s1.ManualStatus);
         Assert.False(s1.HasVideo);
 
         // 実ファイルを置く → true
         var dir = ProjectDir(temp, project.Id);
         await File.WriteAllTextAsync(Path.Combine(dir, "manual", "manual.md"), "# manual");
+        await File.WriteAllTextAsync(Path.Combine(dir, "manual", "manual.html"), "<html></html>");
         await File.WriteAllBytesAsync(Path.Combine(dir, "output", "training_video.mp4"), [1, 2, 3]);
 
         var withFiles = await store.ListProjectsAsync();
         var s2 = Assert.Single(withFiles);
         Assert.True(s2.HasManual);
+        Assert.Equal(ArtifactGenerationState.Current, s2.ManualStatus);
         Assert.True(s2.HasVideo);
     }
 

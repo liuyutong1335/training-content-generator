@@ -2,6 +2,7 @@
 using TrainingContent.App.Services;
 using TrainingContent.App.State;
 using TrainingContent.Capture;
+using TrainingContent.Manual;
 using TrainingContent.Screenshot.Redaction;
 using TrainingContent.Storage;
 using TrainingContent.Video.Renderer;
@@ -59,13 +60,23 @@ public partial class App : Application
             videoTransaction,
             () => new FfmpegVideoRenderer());
 
+        // Manual 生成 backend。Manual Core は file I/O も Outputs 更新も行わない契約のため、
+        // persistence（staging / backup / pair 置換）は Storage 側の transaction が所有する。
+        var manualTransaction = new ManualArtifactTransaction(projectStore);
+        var manualGenerationCoordinator = new ManualGenerationCoordinator(
+            projectStore,
+            currentProject,
+            manualTransaction,
+            ManualGenerator.Generate);
+
         var window = new MainWindow(
             projectStore,
             currentProject,
             workspace,
             recordingCoordinator,
             videoGenerationCoordinator,
-            screenshotRedaction);
+            screenshotRedaction,
+            manualGenerationCoordinator);
         MainWindow = window;
         window.Show();
     }

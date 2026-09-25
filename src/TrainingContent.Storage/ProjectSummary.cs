@@ -22,11 +22,21 @@ public sealed class ProjectSummary
 
     public int StepCount { get; init; }
 
-    /// <summary>Manual 成果物の metadata があり、かつ実ファイルが存在する場合のみ true。</summary>
+    /// <summary>
+    /// Manual 成果物（Markdown + HTML の pair）の metadata と実ファイルが揃っている場合のみ true。
+    /// 意味は <see cref="ManualStatus"/> != <see cref="ArtifactGenerationState.Missing"/> と一致する
+    /// （旧「どちらか 1 件あれば true」の OR semantics は廃止）。
+    /// </summary>
     public bool HasManual { get; init; }
 
     /// <summary>Video 成果物の metadata があり、かつ実ファイルが存在する場合のみ true。</summary>
     public bool HasVideo { get; init; }
+
+    /// <summary>
+    /// Manual 成果物の 3 値 status。Manual は Markdown + HTML の pair なので、
+    /// metadata・実ファイル・<c>SourceRevision</c> のいずれかが pair で揃わない場合は Missing / Stale になる。
+    /// </summary>
+    public ArtifactGenerationState ManualStatus { get; init; }
 
     /// <summary>
     /// Video 成果物の 3 値 status。Contract §16 の <c>SourceRevision != Revision</c> → stale に従う。
@@ -51,6 +61,20 @@ public sealed class ProjectSummary
                 ? ArtifactGenerationState.Current
                 : ArtifactGenerationState.Stale;
 
+        // Manual は pair。metadata が片方でも欠ける / 実ファイルが片方でも無い場合は Missing とし、
+        // 「片方だけ current」を正常状態として扱わない。pair はあるが Revision が食い違う場合は Stale。
+        var markdown = outputs.ManualMarkdown;
+        var html = outputs.ManualHtml;
+        var manualStatus =
+            markdown is null || html is null
+                ? ArtifactGenerationState.Missing
+                : !artifactExists(markdown.Path) || !artifactExists(html.Path)
+                    ? ArtifactGenerationState.Missing
+                    : markdown.SourceRevision == html.SourceRevision
+                      && markdown.SourceRevision == project.Revision
+                        ? ArtifactGenerationState.Current
+                        : ArtifactGenerationState.Stale;
+
         return new ProjectSummary
         {
             Id = project.Id,
@@ -59,10 +83,9 @@ public sealed class ProjectSummary
             UpdatedAtUtc = project.UpdatedAtUtc,
             DurationMs = project.Recording?.DurationMs,
             StepCount = project.Steps.Count,
-            HasManual =
-                (outputs.ManualMarkdown is { } md && artifactExists(md.Path)) ||
-                (outputs.ManualHtml is { } html && artifactExists(html.Path)),
+            HasManual = manualStatus != ArtifactGenerationState.Missing,
             HasVideo = videoStatus != ArtifactGenerationState.Missing,
+            ManualStatus = manualStatus,
             VideoStatus = videoStatus,
         };
     }

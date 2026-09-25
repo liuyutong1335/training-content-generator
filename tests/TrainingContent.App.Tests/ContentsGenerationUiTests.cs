@@ -95,6 +95,67 @@ public class ContentsGenerationUiTests
     }
 
     // =====================================================================
+    // G: manual 生成中の state（U1〜U3）
+    // =====================================================================
+
+    [Fact]
+    public void U1_manual_生成中は_内容操作を止め_video_の_progress_と_cancel_は出さない()
+    {
+        var state = ContentsGenerationUiStateResolver.Resolve(
+            isLoading: false,
+            isGenerating: false,
+            isCancelRequested: false,
+            isManualGenerating: true);
+
+        Assert.False(state.IsContentMutationEnabled);
+        Assert.False(state.IsGridEnabled);
+        Assert.False(state.IsProgressVisible);
+        Assert.False(state.IsCancelVisible);
+        Assert.False(state.IsCancelEnabled);
+    }
+
+    [Fact]
+    public void U2_manual_生成中は_video_も_manual_も新しい生成を開始できない()
+    {
+        var state = ContentsGenerationUiStateResolver.Resolve(
+            isLoading: false,
+            isGenerating: false,
+            isCancelRequested: false,
+            isManualGenerating: true);
+
+        Assert.False(state.IsGenerateEnabled(preconditionMet: true));
+        Assert.False(state.CanStartGeneration);
+    }
+
+    [Fact]
+    public void U3_manual_生成が終われば_lock_が解除される()
+    {
+        var state = ContentsGenerationUiStateResolver.Resolve(
+            isLoading: false,
+            isGenerating: false,
+            isCancelRequested: false,
+            isManualGenerating: false);
+
+        Assert.True(state.IsContentMutationEnabled);
+        Assert.True(state.IsGridEnabled);
+        Assert.True(state.IsGenerateEnabled(preconditionMet: true));
+    }
+
+    [Fact]
+    public void U3b_video_生成中は_isManualGenerating_が_false_でも_progress_が出る()
+    {
+        var state = ContentsGenerationUiStateResolver.Resolve(
+            isLoading: false,
+            isGenerating: true,
+            isCancelRequested: false,
+            isManualGenerating: false);
+
+        Assert.True(state.IsProgressVisible);
+        Assert.True(state.IsCancelVisible);
+        Assert.True(state.IsCancelEnabled);
+    }
+
+    // =====================================================================
     // U5 — result → user-facing message
     // =====================================================================
 
