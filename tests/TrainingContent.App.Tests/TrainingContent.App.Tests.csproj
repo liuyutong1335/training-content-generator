@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 参照先 TrainingContent.App が net8.0-windows + UseWPF のため -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <!-- App → Capture → ScreenRecorderLib は AnyCPU 非対応（targets でチェックされる）ため x64 を明示 -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- service-level test のみを対象とする。WPF View / Window / Dispatcher は対象外。
+         ProjectWorkspace / CurrentProjectContext は WPF 型に依存しないため UI thread は不要。 -->
+    <ProjectReference Include="..\..\src\TrainingContent.App\TrainingContent.App.csproj" />
+  </ItemGroup>
+
+</Project>

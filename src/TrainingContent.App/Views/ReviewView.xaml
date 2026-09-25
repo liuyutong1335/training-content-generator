@@ -1,0 +1,312 @@
+<UserControl x:Class="TrainingContent.App.Views.ReviewView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="28,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="手順確認"
+                   FontSize="24"
+                   FontWeight="SemiBold"
+                   Foreground="#FF1F2933" />
+
+        <Border Grid.Row="1" Height="1" Background="#FFE0E0E0" Margin="0,12,0,20" />
+
+        <Grid Grid.Row="2">
+
+            <!-- ===== Current Project なし ===== -->
+            <StackPanel x:Name="NoProjectPanel">
+                <TextBlock Text="プロジェクトが選択されていません。"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="#FF333333"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="ホームまたはコンテンツ管理からプロジェクトを作成・オープンしてください。"
+                           Margin="0,12,0,0"
+                           Foreground="#FF888888"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- ===== Project はあるが Steps が空 ===== -->
+            <StackPanel x:Name="NoStepsPanel" Visibility="Collapsed">
+                <TextBlock Text="操作手順はまだ生成されていません。"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="#FF333333"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="録画を完了すると手順が生成されます。録画済みの場合は手動で手順を追加することもできます。"
+                           Margin="0,12,0,0"
+                           Foreground="#FF888888"
+                           TextWrapping="Wrap" />
+                <Button x:Name="NoStepsAddStepButton"
+                        Content="手順を追加"
+                        Width="120" Height="30"
+                        Margin="0,16,0,0"
+                        HorizontalAlignment="Left"
+                        ToolTip="この録画に手順を 1 件追加します"
+                        Click="AddStep_Click" />
+            </StackPanel>
+
+            <!-- ===== Review 本体（編集可能） =====
+                 editable control は detached draft（ReviewDraftStep）にのみ bind する。
+                 canonical TrainingStep へは OneWay の読み取り表示も含めて直接 bind しない。 -->
+            <Grid x:Name="ReviewPanel" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="280" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- ===== Step List + 並べ替え / 削除 ===== -->
+                <DockPanel Grid.Column="0">
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="手順一覧"
+                               FontSize="11"
+                               Foreground="#FF888888"
+                               Margin="0,0,0,6" />
+                    <StackPanel DockPanel.Dock="Bottom"
+                                Orientation="Horizontal"
+                                Margin="0,8,0,0">
+                        <Button x:Name="MoveUpButton"
+                                Content="↑"
+                                Width="40" Height="28"
+                                ToolTip="選択中の手順を上へ移動"
+                                Click="MoveUp_Click" />
+                        <Button x:Name="MoveDownButton"
+                                Content="↓"
+                                Width="40" Height="28"
+                                Margin="6,0,0,0"
+                                ToolTip="選択中の手順を下へ移動"
+                                Click="MoveDown_Click" />
+                        <Button x:Name="DeleteStepButton"
+                                Content="削除"
+                                Width="64" Height="28"
+                                Margin="6,0,0,0"
+                                ToolTip="選択中の手順を削除（保存するまで確定しません）"
+                                Click="DeleteStep_Click" />
+                        <Button x:Name="AddStepButton"
+                                Content="追加"
+                                Width="64" Height="28"
+                                Margin="6,0,0,0"
+                                ToolTip="選択中の手順の直後に手順を追加（すぐに保存されます）"
+                                Click="AddStep_Click" />
+                    </StackPanel>
+                    <Border BorderBrush="#FFD0D0D0" BorderThickness="1" Background="White">
+                        <ListBox x:Name="StepListBox"
+                                 BorderThickness="0"
+                                 SelectionMode="Single"
+                                 SelectionChanged="StepListBox_SelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <!-- 表示のみ。bind 先は draft であり canonical TrainingStep ではない。 -->
+                                    <TextBlock TextWrapping="Wrap">
+                                        <Run Text="{Binding DisplayOrder, Mode=OneWay}" /><Run Text=". " /><Run Text="{Binding Title, Mode=OneWay}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </DockPanel>
+
+                <!-- ===== Step Editor + Screenshot Preview ===== -->
+                <Grid Grid.Column="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="16" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0">
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="手順の詳細"
+                                   FontSize="11"
+                                   Foreground="#FF888888"
+                                   Margin="0,0,0,6" />
+                        <Grid>
+                            <!-- 選択なし（全件削除後など） -->
+                            <StackPanel x:Name="EditorEmptyPanel" Visibility="Collapsed">
+                                <TextBlock Text="手順が選択されていません。"
+                                           Foreground="#FF888888"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="EditorEmptyHint"
+                                           Margin="0,8,0,0"
+                                           Foreground="#FF888888"
+                                           TextWrapping="Wrap"
+                                           Visibility="Collapsed" />
+                            </StackPanel>
+
+                            <ScrollViewer x:Name="EditorContentPanel" VerticalScrollBarVisibility="Auto">
+                                <!-- DataContext は選択中の ReviewDraftStep（code-behind が設定する）。 -->
+                                <StackPanel x:Name="EditorPanel">
+
+                                    <StackPanel Orientation="Horizontal">
+                                        <StackPanel Margin="0,0,48,0">
+                                            <TextBlock Text="順序" FontSize="11" Foreground="#FF888888" />
+                                            <TextBlock Text="{Binding DisplayOrder, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF333333" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,48,0">
+                                            <TextBlock Text="開始" FontSize="11" Foreground="#FF888888" />
+                                            <TextBlock Text="{Binding StartMsText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF333333" />
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <TextBlock Text="終了" FontSize="11" Foreground="#FF888888" />
+                                            <TextBlock Text="{Binding EndMsText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF333333" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="タイトル" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="TitleBox"
+                                                 Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 FontSize="15"
+                                                 TextWrapping="Wrap"
+                                                 Foreground="#FF1F2933" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="操作" FontSize="11" Foreground="#FF888888" />
+                                        <TextBlock Text="{Binding ActionText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF555555" TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="対象" FontSize="11" Foreground="#FF888888" />
+                                        <TextBlock Text="{Binding TargetText, Mode=OneWay}" Margin="0,3,0,0" Foreground="#FF555555" TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="説明" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="DescriptionBox"
+                                                 Text="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 Height="64"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Foreground="#FF333333" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="注意" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="CautionBox"
+                                                 Text="{Binding Caution, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 Height="48"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Foreground="#FF333333" />
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,18,0,0">
+                                        <TextBlock Text="期待される結果" FontSize="11" Foreground="#FF888888" />
+                                        <TextBox x:Name="ExpectedResultBox"
+                                                 Text="{Binding ExpectedResult, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,3,0,0"
+                                                 Height="48"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Foreground="#FF333333" />
+                                    </StackPanel>
+
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+                    </DockPanel>
+
+                    <!-- ===== Screenshot Preview + Redaction 選択 ===== -->
+                    <DockPanel Grid.Row="2">
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="スクリーンショット"
+                                   FontSize="11"
+                                   Foreground="#FF888888"
+                                   Margin="0,0,0,6" />
+                        <StackPanel DockPanel.Dock="Bottom"
+                                    Orientation="Horizontal"
+                                    Margin="0,8,0,0">
+                            <Button x:Name="RedactButton"
+                                    Content="範囲を黒塗り"
+                                    Width="120" Height="28"
+                                    ToolTip="画像上をドラッグして範囲を選び、その範囲を黒塗りした新しい画像を作成します"
+                                    Click="Redact_Click" />
+                            <Button x:Name="ClearSelectionButton"
+                                    Content="選択を解除"
+                                    Width="96" Height="28"
+                                    Margin="6,0,0,0"
+                                    Click="ClearSelection_Click" />
+                            <Button x:Name="ReplaceScreenshotButton"
+                                    Content="画像を追加"
+                                    Width="120" Height="28"
+                                    Margin="6,0,0,0"
+                                    ToolTip="画像ファイル（png / jpg / jpeg / bmp）を教材用 screenshot として取り込みます"
+                                    Click="ReplaceScreenshot_Click" />
+                            <TextBlock x:Name="ScreenshotStatusText"
+                                       Margin="10,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="#FF555555"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Border x:Name="ScreenshotPreviewBorder"
+                                BorderBrush="#FFD0D0D0"
+                                BorderThickness="1"
+                                Background="White"
+                                Height="200">
+                            <Grid>
+                                <!-- Stretch=Uniform（縦横比維持）。letterbox は coordinate 変換側で吸収する。 -->
+                                <Image x:Name="ScreenshotImage" Stretch="Uniform" />
+                                <!-- drag で 1 rectangle を選ぶ。transparent でないと hit test されない。 -->
+                                <Canvas x:Name="SelectionOverlay"
+                                        Background="Transparent"
+                                        MouseLeftButtonDown="SelectionOverlay_MouseLeftButtonDown"
+                                        MouseMove="SelectionOverlay_MouseMove"
+                                        MouseLeftButtonUp="SelectionOverlay_MouseLeftButtonUp">
+                                    <Rectangle x:Name="SelectionRectangle"
+                                               Stroke="#FF1F6FEB"
+                                               StrokeThickness="1.5"
+                                               Fill="#331F6FEB"
+                                               Visibility="Collapsed" />
+                                </Canvas>
+                                <TextBlock x:Name="ScreenshotMessageText"
+                                           Foreground="#FF888888"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap" />
+                            </Grid>
+                        </Border>
+                    </DockPanel>
+
+                    <!-- ===== Status + Save / Discard ===== -->
+                    <DockPanel Grid.Row="3" Margin="0,12,0,0">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button x:Name="DiscardButton"
+                                    Content="変更を破棄"
+                                    Width="104" Height="30"
+                                    ToolTip="編集内容を捨てて保存済みの内容に戻します"
+                                    Click="Discard_Click" />
+                            <Button x:Name="SaveButton"
+                                    Content="保存"
+                                    Width="104" Height="30"
+                                    Margin="8,0,0,0"
+                                    FontWeight="SemiBold"
+                                    Click="Save_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="ReviewStatusText"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,12,0"
+                                   Foreground="#FF555555"
+                                   TextWrapping="Wrap" />
+                    </DockPanel>
+
+                </Grid>
+            </Grid>
+
+        </Grid>
+    </Grid>
+</UserControl>

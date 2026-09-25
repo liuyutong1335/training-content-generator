@@ -1,15 +1,39 @@
-# 監査 §06 対策: core.autocrlf=true の Windows チェックアウトでテスト期待値が
-# CRLF になり Writer の LF 出力と不一致する事故を防ぐ。テキストは LF で正規化する。
-* text=auto
-*.cs text eol=lf
-*.csproj text eol=lf
-*.sln text eol=crlf
-*.md text eol=lf
-*.json text eol=lf
-*.jsonl text eol=lf
-*.ass text eol=lf
-*.ps1 text eol=crlf
-*.sh text eol=lf
-*.png binary
-*.mp4 binary
-*.wav binary
+# ---------------------------------------------------------------------
+# Line endings
+#
+# 目的:
+#   - リポジトリ内の text file の EOL を LF に統一する
+#   - 開発者ごとの core.autocrlf 設定差を吸収する
+#   - 不要な whole-file EOL diff を防ぐ
+#   - text fixture / script / docs 等の byte-level EOL を安定させる
+#
+# バイナリは binary と明示して text normalization の対象外にする。
+# * text=auto は使わない（未知の file 種別に正規化を及ぼさないため）。
+# ---------------------------------------------------------------------
+
+# C# ソース / プロジェクト / ソリューション
+*.cs       text eol=lf
+*.csproj   text eol=lf
+*.sln      text eol=lf
+
+# WPF / ドキュメント / データ / 設定
+*.xaml     text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf
+*.jsonl    text eol=lf
+*.toml     text eol=lf
+
+# 補助スクリプト / 字幕
+*.py       text eol=lf
+*.ps1      text eol=lf
+*.sh       text eol=lf
+*.ass      text eol=lf
+
+# repository metadata
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+# バイナリ（text normalization の対象外）
+*.png      binary
+*.mp4      binary
+*.wav      binary
